@@ -16,7 +16,7 @@ import uuid
 import zipfile
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, Header, HTTPException
+from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from cryptography.fernet import Fernet, InvalidToken
@@ -1596,6 +1596,16 @@ async def update_settings(payload: AnalyzerSettingsUpdate):
 # All methods are synchronous and must be called via asyncio.to_thread().
 # ---------------------------------------------------------------------------
 
+# Maps severity levels to short text labels used in GitHub PR comment headers.
+# Plain text only — no emoji in logic code.
+SEVERITY_LABELS: Dict[str, str] = {
+    "critical": "[CRITICAL]",
+    "high": "[HIGH]",
+    "medium": "[MEDIUM]",
+    "low": "[LOW]",
+}
+
+
 class GithubClient:
     """Thin wrapper around the GitHub REST API. Uses the requests library only."""
 
@@ -1643,9 +1653,9 @@ class GithubClient:
 
     def post_pr_inline_comment(self, owner: str, repo: str, pr_number: int, fix: FixProposal, head_sha: str) -> bool:
         """Post a single inline review comment on the PR for a given fix proposal."""
-        severity_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵"}.get(fix.severity, "⚪")
+        severity_label = SEVERITY_LABELS.get(fix.severity, f"[{fix.severity.upper()}]")
         body = (
-            f"{severity_emoji} **DR.CODE [{fix.severity.upper()}]:** {fix.title}\n\n"
+            f"**DR.CODE {severity_label} — {fix.title}**\n\n"
             f"{fix.detail}\n\n"
             f"**Suggested fix:**\n```\n{fix.replacement_line.strip()}\n```"
         )
@@ -1666,7 +1676,7 @@ class GithubClient:
     def post_pr_summary_comment(self, owner: str, repo: str, pr_number: int, summary: str, fix_count: int, critical_count: int) -> bool:
         """Post a summary comment on the PR issue thread (not inline)."""
         body = (
-            f"## 🩺 DR.CODE Analysis Complete\n\n"
+            f"## DR.CODE Analysis Complete\n\n"
             f"{summary}\n\n"
             f"| Metric | Value |\n|---|---|\n"
             f"| Total fixes proposed | {fix_count} |\n"
@@ -1780,11 +1790,9 @@ async def run_github_pr_pipeline(
 
 # ---------------------------------------------------------------------------
 # Upgraded webhook endpoint — backward-compatible.
-# Old stub payload (GitWebhookEvent shape) → logs as before.
-# Real GitHub PR payload (has "pull_request" key) → runs full pipeline.
+# Old stub payload (GitWebhookEvent shape) -> logs as before.
+# Real GitHub PR payload (has "pull_request" key) -> runs full pipeline.
 # ---------------------------------------------------------------------------
-
-from fastapi import Request  # noqa: E402 — placed here to avoid top-level import confusion
 
 
 @api_router.post("/integrations/git/webhook", response_model=IntegrationEvent)
