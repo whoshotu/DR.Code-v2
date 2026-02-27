@@ -2,6 +2,7 @@ import asyncio
 import base64
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import io
 import json
 import logging
@@ -156,6 +157,27 @@ class IntegrationEvent(BaseModel):
     event_type: str
     status: str
     details: Dict[str, Any]
+
+
+# --- GitHub Integration Models (v2 addition) ---
+
+class GitHubSettingsUpdate(BaseModel):
+    token: Optional[str] = None
+    webhook_secret: Optional[str] = None
+    clear_token: bool = False
+
+
+class GitHubSettingsPublic(BaseModel):
+    token_configured: bool
+    token_masked: Optional[str] = None
+    webhook_secret_configured: bool
+
+
+class GitHubPRWebhookPayload(BaseModel):
+    """Shape of a real GitHub pull_request webhook event."""
+    action: str
+    pull_request: Dict[str, Any]
+    repository: Dict[str, Any]
 
 
 SUPPORTED_REPO_EXTENSIONS = {
@@ -640,6 +662,17 @@ def build_default_settings_doc() -> Dict[str, Any]:
         providers["ollama"]["model"] = os.environ["OLLAMA_MODEL"]
     providers["ollama"]["enabled"] = bool(os.environ.get("OLLAMA_BASE_URL") and os.environ.get("OLLAMA_MODEL"))
 
+    # v2: GitHub integration block — token stored encrypted, same pattern as AI provider keys
+    github_token_env = os.environ.get("GITHUB_TOKEN")
+    github_webhook_secret_env = os.environ.get("GITHUB_WEBHOOK_SECRET")
+    github_block: Dict[str, Any] = {
+        "token_encrypted": encrypt_value(github_token_env) if github_token_env else None,
+        "token_masked": mask_key(github_token_env) if github_token_env else None,
+        "token_configured": bool(github_token_env),
+        "webhook_secret_encrypted": encrypt_value(github_webhook_secret_env) if github_webhook_secret_env else None,
+        "webhook_secret_configured": bool(github_webhook_secret_env),
+    }
+
     return {
         "id": "default",
         "severity": SeverityThresholds().model_dump(),
@@ -649,6 +682,7 @@ def build_default_settings_doc() -> Dict[str, Any]:
             "fallback_enabled": True,
             "fallback_provider": "openai_compatible",
         },
+        "github": github_block,
     }
 
 
@@ -1557,13 +1591,253 @@ async def update_settings(payload: AnalyzerSettingsUpdate):
     return to_public_settings(updated_doc)
 
 
+# ---------------------------------------------------------------------------
+# v2: GitHub Client — all GitHub REST API calls isolated here.
+# All methods are synchronous and must be called via asyncio.to_thread().
+# ---------------------------------------------------------------------------
+
+class GithubClient:
+    """Thin wrapper around the GitHub REST API. Uses the requests library only."""
+
+    BASE = "https://api.github.com"
+
+    def __init__(self, token: str):
+        self._headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+
+    def fetch_pr_files(self, owner: str, repo: str, pr_number: int, head_sha: str) -> List[RepositoryFile]:
+        """Return file content for all changed files in a PR that are in SUPPORTED_REPO_EXTENSIONS."""
+        url = f"{self.BASE}/repos/{owner}/{repo}/pulls/{pr_number}/files"
+        resp = requests.get(url, headers=self._headers, timeout=20)
+        if resp.status_code != 200:
+            logger.warning("GitHub PR files fetch failed: %s %s", resp.status_code, resp.text[:200])
+            return []
+
+        result: List[RepositoryFile] = []
+        for file_meta in resp.json():
+            filename: str = file_meta.get("filename", "")
+            status: str = file_meta.get("status", "")
+            if status == "removed":
+                continue
+            if Path(filename).suffix.lower() not in SUPPORTED_REPO_EXTENSIONS:
+                continue
+            content = self._fetch_file_content(owner, repo, filename, head_sha)
+            if content is not None:
+                result.append(RepositoryFile(path=filename, content=content))
+        return result
+
+    def _fetch_file_content(self, owner: str, repo: str, path: str, ref: str) -> Optional[str]:
+        url = f"{self.BASE}/repos/{owner}/{repo}/contents/{path}"
+        resp = requests.get(url, headers=self._headers, params={"ref": ref}, timeout=15)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        encoded = data.get("content", "")
+        try:
+            return base64.b64decode(encoded).decode("utf-8", errors="replace")
+        except Exception:
+            return None
+
+    def post_pr_inline_comment(self, owner: str, repo: str, pr_number: int, fix: FixProposal, head_sha: str) -> bool:
+        """Post a single inline review comment on the PR for a given fix proposal."""
+        severity_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵"}.get(fix.severity, "⚪")
+        body = (
+            f"{severity_emoji} **DR.CODE [{fix.severity.upper()}]:** {fix.title}\n\n"
+            f"{fix.detail}\n\n"
+            f"**Suggested fix:**\n```\n{fix.replacement_line.strip()}\n```"
+        )
+        url = f"{self.BASE}/repos/{owner}/{repo}/pulls/{pr_number}/comments"
+        payload = {
+            "body": body,
+            "commit_id": head_sha,
+            "path": fix.file_path,
+            "line": fix.line_number,
+            "side": "RIGHT",
+        }
+        resp = requests.post(url, headers=self._headers, json=payload, timeout=15)
+        if resp.status_code not in {200, 201}:
+            logger.warning("GitHub inline comment failed: %s %s", resp.status_code, resp.text[:200])
+            return False
+        return True
+
+    def post_pr_summary_comment(self, owner: str, repo: str, pr_number: int, summary: str, fix_count: int, critical_count: int) -> bool:
+        """Post a summary comment on the PR issue thread (not inline)."""
+        body = (
+            f"## 🩺 DR.CODE Analysis Complete\n\n"
+            f"{summary}\n\n"
+            f"| Metric | Value |\n|---|---|\n"
+            f"| Total fixes proposed | {fix_count} |\n"
+            f"| Critical issues | {critical_count} |\n\n"
+            f"*Inline comments have been added to the changed lines above.*"
+        )
+        url = f"{self.BASE}/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        resp = requests.post(url, headers=self._headers, json={"body": body}, timeout=15)
+        return resp.status_code in {200, 201}
+
+
+def verify_github_signature(raw_body: bytes, secret: str, signature_header: Optional[str]) -> bool:
+    """Return True if the X-Hub-Signature-256 header matches the HMAC of the payload."""
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+    expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    received = signature_header.removeprefix("sha256=")
+    return hmac.compare_digest(expected, received)
+
+
+async def _run_github_pr_pipeline_sync(
+    pr_payload: GitHubPRWebhookPayload,
+    token: str,
+    settings_doc: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Synchronous core of the GitHub PR pipeline — called via asyncio.to_thread."""
+    pull_request = pr_payload.pull_request
+    repository = pr_payload.repository
+    pr_number: int = pull_request["number"]
+    head_sha: str = pull_request["head"]["sha"]
+    repo_full_name: str = repository["full_name"]  # e.g. "owner/repo"
+    owner, repo = repo_full_name.split("/", 1)
+
+    github = GithubClient(token)
+    files = github.fetch_pr_files(owner, repo, pr_number, head_sha)
+    if not files:
+        return {"status": "no-supported-files", "comment_count": 0, "fix_count": 0}
+
+    thresholds = SeverityThresholds(**settings_doc["severity"])
+    fixes = generate_repository_fix_proposals(files, thresholds)
+    critical_count = sum(1 for f in fixes if f.severity == "critical")
+    summary = build_repository_summary(fixes, len(files))
+
+    comment_count = 0
+    for fix in fixes:
+        posted = github.post_pr_inline_comment(owner, repo, pr_number, fix, head_sha)
+        if posted:
+            comment_count += 1
+
+    github.post_pr_summary_comment(owner, repo, pr_number, summary, len(fixes), critical_count)
+    return {
+        "status": "analyzed",
+        "pr_number": pr_number,
+        "head_sha": head_sha,
+        "file_count": len(files),
+        "fix_count": len(fixes),
+        "critical_count": critical_count,
+        "comment_count": comment_count,
+        "summary": summary,
+    }
+
+
+async def run_github_pr_pipeline(
+    pr_payload: GitHubPRWebhookPayload,
+    settings_doc: Dict[str, Any],
+) -> IntegrationEvent:
+    """Orchestrate the full PR analysis pipeline and return the logged IntegrationEvent."""
+    github_conf = settings_doc.get("github", {})
+    token = decrypt_value(github_conf.get("token_encrypted"))
+
+    if not token:
+        logger.warning("GitHub PR webhook received but no token configured — skipping analysis.")
+        event = IntegrationEvent(
+            source="github",
+            event_type="pull_request",
+            status="skipped-no-token",
+            details={"action": pr_payload.action, "repo": pr_payload.repository.get("full_name", "")},
+        )
+        await db.integration_events.insert_one(event.model_dump())
+        return event
+
+    try:
+        result = await asyncio.to_thread(
+            _run_github_pr_pipeline_sync,
+            pr_payload,
+            token,
+            settings_doc,
+        )
+    except Exception as exc:
+        logger.exception("GitHub PR pipeline error: %s", exc)
+        result = {"status": "error", "error": str(exc)}
+
+    event = IntegrationEvent(
+        source="github",
+        event_type="pull_request",
+        status=result.get("status", "error"),
+        details=result,
+    )
+    await db.integration_events.insert_one(event.model_dump())
+
+    # Governance audit trail — same pattern as /analyze
+    actor = ActorContext(actor_id="github-webhook", role="reviewer")
+    await record_governance_event(
+        actor=actor,
+        action="github-pr-analysis",
+        status=result.get("status", "error"),
+        details=result,
+    )
+    return event
+
+
+# ---------------------------------------------------------------------------
+# Upgraded webhook endpoint — backward-compatible.
+# Old stub payload (GitWebhookEvent shape) → logs as before.
+# Real GitHub PR payload (has "pull_request" key) → runs full pipeline.
+# ---------------------------------------------------------------------------
+
+from fastapi import Request  # noqa: E402 — placed here to avoid top-level import confusion
+
+
 @api_router.post("/integrations/git/webhook", response_model=IntegrationEvent)
-async def git_webhook(payload: GitWebhookEvent):
+async def git_webhook(
+    request: Request,
+    x_hub_signature_256: Optional[str] = Header(default=None),
+    x_github_event: Optional[str] = Header(default=None),
+):
+    raw_body = await request.body()
+    try:
+        body = json.loads(raw_body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    # --- Detect real GitHub PR webhook ---
+    if "pull_request" in body and "repository" in body:
+        settings_doc = await get_or_create_settings_doc()
+        github_conf = settings_doc.get("github", {})
+
+        # HMAC signature check (only if webhook_secret is configured)
+        webhook_secret = decrypt_value(github_conf.get("webhook_secret_encrypted"))
+        if webhook_secret:
+            if not verify_github_signature(raw_body, webhook_secret, x_hub_signature_256):
+                logger.warning("GitHub webhook signature mismatch — request rejected.")
+                raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        else:
+            logger.warning("No webhook_secret configured — skipping HMAC verification.")
+
+        action = body.get("action", "")
+        if action not in {"opened", "synchronize", "reopened"}:
+            # Acknowledge non-analysis events without doing work
+            event = IntegrationEvent(
+                source="github",
+                event_type="pull_request",
+                status=f"ignored-action:{action}",
+                details={"action": action, "repo": body.get("repository", {}).get("full_name", "")},
+            )
+            await db.integration_events.insert_one(event.model_dump())
+            return event
+
+        pr_payload = GitHubPRWebhookPayload(
+            action=action,
+            pull_request=body["pull_request"],
+            repository=body["repository"],
+        )
+        return await run_github_pr_pipeline(pr_payload, settings_doc)
+
+    # --- Backward-compat: old stub payload (GitWebhookEvent shape) ---
     event = IntegrationEvent(
         source="git",
-        event_type=payload.event_type,
+        event_type=body.get("event_type", "push"),
         status="received",
-        details=payload.model_dump(),
+        details=body,
     )
     await db.integration_events.insert_one(event.model_dump())
     return event
@@ -1585,6 +1859,55 @@ async def ci_event(payload: CIEvent):
 async def list_integration_events():
     events = await db.integration_events.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
     return [IntegrationEvent(**event) for event in events]
+
+
+@api_router.put("/settings/github", response_model=GitHubSettingsPublic)
+async def update_github_settings(payload: GitHubSettingsUpdate):
+    """Store GitHub PAT and webhook secret (encrypted). Never returns the raw token."""
+    settings_doc = await get_or_create_settings_doc()
+    github_conf = settings_doc.get("github", {})
+
+    if payload.clear_token:
+        github_conf["token_encrypted"] = None
+        github_conf["token_masked"] = None
+        github_conf["token_configured"] = False
+    elif payload.token and payload.token.strip():
+        cleaned = payload.token.strip()
+        github_conf["token_encrypted"] = encrypt_value(cleaned)
+        github_conf["token_masked"] = mask_key(cleaned)
+        github_conf["token_configured"] = True
+
+    if payload.webhook_secret is not None:
+        stripped = payload.webhook_secret.strip()
+        if stripped:
+            github_conf["webhook_secret_encrypted"] = encrypt_value(stripped)
+            github_conf["webhook_secret_configured"] = True
+        else:
+            github_conf["webhook_secret_encrypted"] = None
+            github_conf["webhook_secret_configured"] = False
+
+    await db.app_settings.update_one(
+        {"id": "default"},
+        {"$set": {"github": github_conf}},
+        upsert=True,
+    )
+    return GitHubSettingsPublic(
+        token_configured=bool(github_conf.get("token_configured")),
+        token_masked=github_conf.get("token_masked"),
+        webhook_secret_configured=bool(github_conf.get("webhook_secret_configured")),
+    )
+
+
+@api_router.get("/integrations/github/status", response_model=GitHubSettingsPublic)
+async def get_github_status():
+    """Return GitHub integration status (token configured, webhook secret configured)."""
+    settings_doc = await get_or_create_settings_doc()
+    github_conf = settings_doc.get("github", {})
+    return GitHubSettingsPublic(
+        token_configured=bool(github_conf.get("token_configured")),
+        token_masked=github_conf.get("token_masked"),
+        webhook_secret_configured=bool(github_conf.get("webhook_secret_configured")),
+    )
 
 
 app.include_router(api_router)

@@ -78,4 +78,13 @@ export const api = {
     const { data } = await client.get("/integrations/events");
     return data;
   },
+  // v2: GitHub integration
+  saveGithubSettings: async (payload) => {
+    const { data } = await client.put("/settings/github", payload);
+    return data;
+  },
+  getGithubStatus: async () => {
+    const { data } = await client.get("/integrations/github/status");
+    return data;
+  },
 };

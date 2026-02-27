@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Github } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,6 +41,12 @@ export default function SettingsPage() {
     anthropic: false,
   });
 
+  // v2: GitHub integration state
+  const [githubToken, setGithubToken] = useState("");
+  const [githubSecret, setGithubSecret] = useState("");
+  const [clearGithubToken, setClearGithubToken] = useState(false);
+  const [githubStatus, setGithubStatus] = useState(null);
+
   const providerEntries = useMemo(() => Object.entries(providerMeta), []);
 
   useEffect(() => {
@@ -52,6 +59,8 @@ export default function SettingsPage() {
       });
     };
     load();
+    // v2: load GitHub status on mount
+    api.getGithubStatus().then(setGithubStatus).catch(() => null);
   }, []);
 
   const updateSeverity = (key, value) => {
@@ -113,6 +122,24 @@ export default function SettingsPage() {
     setApiKeys({ ollama: "", openai_compatible: "", gemini: "", anthropic: "" });
     setClearKeys({ ollama: false, openai_compatible: false, gemini: false, anthropic: false });
     toast.success("Provider settings updated");
+  };
+
+  // v2: Save GitHub PAT + webhook secret
+  const saveGithubSettings = async () => {
+    try {
+      const updated = await api.saveGithubSettings({
+        token: githubToken || undefined,
+        webhook_secret: githubSecret || undefined,
+        clear_token: clearGithubToken,
+      });
+      setGithubStatus(updated);
+      setGithubToken("");
+      setGithubSecret("");
+      setClearGithubToken(false);
+      toast.success("GitHub integration settings saved");
+    } catch {
+      toast.error("Failed to save GitHub settings");
+    }
   };
 
   return (
@@ -243,7 +270,58 @@ export default function SettingsPage() {
           <Input data-testid="threshold-high-input" className="h-10" type="number" value={settings.severity.high} onChange={(event) => updateSeverity("high", event.target.value)} />
           <Input data-testid="threshold-medium-input" className="h-10" type="number" value={settings.severity.medium} onChange={(event) => updateSeverity("medium", event.target.value)} />
           <Input data-testid="threshold-low-input" className="h-10" type="number" value={settings.severity.low} onChange={(event) => updateSeverity("low", event.target.value)} />
-          <Button data-testid="save-settings-button" className="h-10 md:col-span-2" onClick={saveSettings}>Save Provider & Severity Settings</Button>
+          <Button data-testid="save-settings-button" className="h-10 md:col-span-2" onClick={saveSettings}>Save Provider &amp; Severity Settings</Button>
+        </CardContent>
+      </Card>
+
+      {/* v2: GitHub Integration Card */}
+      <Card data-testid="github-settings-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2" data-testid="github-settings-title">
+            <Github className="h-5 w-5" /> GitHub Integration
+            {githubStatus?.token_configured && (
+              <Badge variant="secondary" data-testid="github-settings-status-badge">connected</Badge>
+            )}
+          </CardTitle>
+          <CardDescription data-testid="github-settings-description">
+            Store your GitHub PAT to enable automatic PR analysis and inline comment-back.
+            Token is encrypted at rest using Fernet (same as AI provider keys).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Input
+            data-testid="github-token-input"
+            className="h-10"
+            type="password"
+            value={githubToken}
+            onChange={(e) => setGithubToken(e.target.value)}
+            placeholder="GitHub PAT (ghp_…)"
+          />
+          {githubStatus?.token_masked && (
+            <p className="text-xs text-muted-foreground" data-testid="github-token-masked-display">
+              Saved token: <code>{githubStatus.token_masked}</code>
+            </p>
+          )}
+          <Input
+            data-testid="github-webhook-secret-input"
+            className="h-10"
+            type="password"
+            value={githubSecret}
+            onChange={(e) => setGithubSecret(e.target.value)}
+            placeholder="Webhook secret (optional but recommended)"
+          />
+          <label className="inline-flex items-center gap-2 text-sm" data-testid="github-clear-token-label">
+            <input
+              data-testid="github-clear-token-checkbox"
+              type="checkbox"
+              checked={clearGithubToken}
+              onChange={(e) => setClearGithubToken(e.target.checked)}
+            />
+            Clear saved GitHub token
+          </label>
+          <Button data-testid="github-save-button" className="h-10" onClick={saveGithubSettings}>
+            Save GitHub Settings
+          </Button>
         </CardContent>
       </Card>
     </section>
