@@ -1,0 +1,1609 @@
+import asyncio
+import base64
+from datetime import datetime, timezone
+import hashlib
+import io
+import json
+import logging
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+from typing import Any, Dict, List, Optional
+import uuid
+import zipfile
+
+from dotenv import load_dotenv
+from fastapi import APIRouter, FastAPI, Header, HTTPException
+from fastapi.responses import StreamingResponse
+from motor.motor_asyncio import AsyncIOMotorClient
+from cryptography.fernet import Fernet, InvalidToken
+from pydantic import BaseModel, Field, model_validator
+import requests
+from starlette.middleware.cors import CORSMiddleware
+from time import perf_counter
+
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / ".env")
+
+mongo_url = os.environ["MONGO_URL"]
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ["DB_NAME"]]
+
+app = FastAPI()
+api_router = APIRouter(prefix="/api")
+
+
+class SeverityThresholds(BaseModel):
+    critical: int = Field(default=85, ge=0, le=100)
+    high: int = Field(default=70, ge=0, le=100)
+    medium: int = Field(default=45, ge=0, le=100)
+    low: int = Field(default=0, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def check_order(self):
+        if not (self.critical > self.high > self.medium >= self.low):
+            raise ValueError("Thresholds must follow: critical > high > medium >= low")
+        return self
+
+
+class AnalyzerSettings(BaseModel):
+    id: str = "default"
+    use_ollama: bool = False
+    ollama_base_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+    severity: SeverityThresholds = Field(default_factory=SeverityThresholds)
+    providers: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    routing: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AnalyzerSettingsUpdate(BaseModel):
+    use_ollama: Optional[bool] = None
+    ollama_base_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+    severity: SeverityThresholds
+    providers: Optional[Dict[str, Dict[str, Any]]] = None
+    routing: Optional[Dict[str, Any]] = None
+
+
+PROVIDER_KEYS = ["ollama", "openai_compatible", "gemini", "anthropic"]
+
+DEFAULT_MODELS = {
+    "ollama": "llama3.1:8b",
+    "openai_compatible": "gpt-5.2",
+    "gemini": "gemini-2.5-pro",
+    "anthropic": "claude-sonnet-4-6",
+}
+
+DEFAULT_BASE_URLS = {
+    "ollama": "http://localhost:11434",
+    "openai_compatible": "https://api.openai.com/v1",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta",
+    "anthropic": "https://api.anthropic.com/v1",
+}
+
+
+class Issue(BaseModel):
+    issue_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    category: str
+    title: str
+    detail: str
+    severity: str
+    score: int
+    line_number: Optional[int] = None
+    fix_suggestion: str
+    code_snippet: Optional[str] = None
+    source: str = "rule"
+    confidence: float = 0.7
+    risk_tags: List[str] = Field(default_factory=list)
+    decision_trace: List[str] = Field(default_factory=list)
+
+
+class AnalyzeRequest(BaseModel):
+    code: str = Field(min_length=1)
+    filename: Optional[str] = "untitled"
+    language: str = "python"
+
+
+class AnalysisReport(BaseModel):
+    report_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    filename: str
+    language: str
+    source_code: str
+    summary: str
+    issues: List[Issue]
+    documentation: str
+    ai_notes: Optional[str] = None
+    mode: str
+    governance: Dict[str, Any] = Field(default_factory=dict)
+    quality_checks: List[Dict[str, Any]] = Field(default_factory=list)
+    monitoring: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ReportSummary(BaseModel):
+    report_id: str
+    created_at: str
+    filename: str
+    language: str
+    summary: str
+    mode: str
+    issue_count: int
+    critical_count: int
+
+
+class GitWebhookEvent(BaseModel):
+    repository: str
+    event_type: str
+    branch: Optional[str] = None
+    commit_sha: Optional[str] = None
+    payload_preview: Optional[str] = None
+
+
+class CIEvent(BaseModel):
+    pipeline: str
+    status: str
+    branch: str
+    commit_sha: str
+
+
+class IntegrationEvent(BaseModel):
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    source: str
+    event_type: str
+    status: str
+    details: Dict[str, Any]
+
+
+SUPPORTED_REPO_EXTENSIONS = {
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".json",
+    ".md",
+    ".txt",
+    ".yml",
+    ".yaml",
+    ".css",
+    ".html",
+}
+
+
+class RepositoryFile(BaseModel):
+    path: str
+    content: str
+
+
+class RepositoryAnalyzeRequest(BaseModel):
+    repository_name: str = "uploaded-repository"
+    files: List[RepositoryFile]
+
+    @model_validator(mode="after")
+    def validate_repo_payload(self):
+        if len(self.files) == 0:
+            raise ValueError("Repository payload must include at least one file")
+        if len(self.files) > 300:
+            raise ValueError("Maximum 300 files allowed per repository scan")
+        total_size = sum(len(file.content) for file in self.files)
+        if total_size > 1_500_000:
+            raise ValueError("Repository payload exceeds maximum size (1.5MB)")
+        return self
+
+
+class FixProposal(BaseModel):
+    fix_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    file_path: str
+    line_number: int
+    title: str
+    detail: str
+    severity: str
+    score: int
+    original_line: str
+    replacement_line: str
+    approved: bool = False
+    auto_applicable: bool = True
+
+
+class RepositoryAnalysisResult(BaseModel):
+    session_id: str
+    repository_name: str
+    created_at: str
+    file_count: int
+    status: str
+    summary: str
+    fixes: List[FixProposal]
+    applied_fix_count: int = 0
+
+
+class ApplyRepositoryFixesRequest(BaseModel):
+    session_id: str
+    approve_all: bool = False
+    approved_fix_ids: List[str] = Field(default_factory=list)
+
+
+class ApplyRepositoryFixesResponse(BaseModel):
+    session_id: str
+    status: str
+    applied_fix_count: int
+    updated_file_count: int
+    message: str
+
+
+class ActorContext(BaseModel):
+    actor_id: str
+    role: str
+
+
+class GovernancePolicy(BaseModel):
+    id: str = "default"
+    version: int = 1
+    allowed_providers: List[str] = Field(default_factory=lambda: ["ollama", "openai_compatible", "gemini", "anthropic"])
+    blocked_patterns: List[str] = Field(default_factory=lambda: ["rm -rf", "drop database", "private_key"])
+    max_code_length: int = 70000
+    require_reviewer_for_high_risk: bool = True
+    min_transparency_confidence: float = Field(default=0.45, ge=0.0, le=1.0)
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_by: str = "system"
+
+
+class GovernancePolicyUpdate(BaseModel):
+    allowed_providers: List[str]
+    blocked_patterns: List[str]
+    max_code_length: int = Field(ge=1000, le=250000)
+    require_reviewer_for_high_risk: bool
+    min_transparency_confidence: float = Field(ge=0.0, le=1.0)
+
+
+class GovernanceAuditEvent(BaseModel):
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    actor_id: str
+    role: str
+    action: str
+    status: str
+    details: Dict[str, Any]
+
+
+class SecurityEvent(BaseModel):
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    severity: str
+    event_type: str
+    actor_id: str
+    details: Dict[str, Any]
+
+
+ALLOWED_ROLES = {"admin", "reviewer"}
+ALLOWED_LANGUAGES = {"python", "javascript", "typescript"}
+
+
+def resolve_actor_context(actor_id: Optional[str], role: Optional[str]) -> ActorContext:
+    normalized_role = (role or "reviewer").strip().lower()
+    if normalized_role not in ALLOWED_ROLES:
+        normalized_role = "reviewer"
+    return ActorContext(actor_id=(actor_id or "anonymous").strip() or "anonymous", role=normalized_role)
+
+
+def require_admin(actor: ActorContext):
+    if actor.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin role is required for this action")
+
+
+def redact_sensitive_text(text: Optional[str]) -> Optional[str]:
+    if text is None:
+        return None
+    redacted = re.sub(
+        r"(?i)(password|secret|token|api_key)\s*[:=]\s*['\"][^'\"]+['\"]",
+        r"\1 = \"***\"",
+        text,
+    )
+    redacted = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "sk-***", redacted)
+    return redacted
+
+
+def redact_issue(issue: Issue) -> Issue:
+    issue.code_snippet = redact_sensitive_text(issue.code_snippet)
+    issue.detail = redact_sensitive_text(issue.detail) or issue.detail
+    return issue
+
+
+async def record_governance_event(actor: ActorContext, action: str, status: str, details: Dict[str, Any]):
+    event = GovernanceAuditEvent(actor_id=actor.actor_id, role=actor.role, action=action, status=status, details=details)
+    await db.governance_audit_logs.insert_one(event.model_dump())
+
+
+async def record_security_event(severity: str, event_type: str, actor: ActorContext, details: Dict[str, Any]):
+    event = SecurityEvent(severity=severity, event_type=event_type, actor_id=actor.actor_id, details=details)
+    await db.security_events.insert_one(event.model_dump())
+
+
+def default_governance_policy_doc() -> Dict[str, Any]:
+    return GovernancePolicy().model_dump()
+
+
+async def get_or_create_governance_policy() -> GovernancePolicy:
+    doc = await db.governance_policies.find_one({"id": "default"}, {"_id": 0})
+    if doc:
+        return GovernancePolicy(**doc)
+    default_policy = GovernancePolicy()
+    await db.governance_policies.insert_one(default_policy.model_dump())
+    return default_policy
+
+
+def run_data_validation_checks(code: str, language: str, policy: GovernancePolicy) -> List[Dict[str, Any]]:
+    checks: List[Dict[str, Any]] = []
+
+    checks.append({"check": "language-allowlist", "status": "passed" if language in ALLOWED_LANGUAGES else "failed", "detail": language})
+    checks.append({"check": "max-length", "status": "passed" if len(code) <= policy.max_code_length else "failed", "detail": len(code)})
+    checks.append({"check": "non-empty", "status": "passed" if code.strip() else "failed", "detail": "content present" if code.strip() else "empty"})
+    checks.append({"check": "null-byte", "status": "passed" if "\x00" not in code else "failed", "detail": "no null bytes"})
+
+    lowered = code.lower()
+    blocked = [pattern for pattern in policy.blocked_patterns if pattern.lower() in lowered]
+    checks.append({"check": "blocked-patterns", "status": "failed" if blocked else "passed", "detail": blocked})
+
+    return checks
+
+
+def ensure_checks_pass(checks: List[Dict[str, Any]]):
+    failed = [check for check in checks if check["status"] == "failed"]
+    if failed:
+        summary = "; ".join([f"{check['check']} ({check['detail']})" for check in failed])
+        raise HTTPException(status_code=400, detail=f"Data validation failed: {summary}")
+
+
+def score_to_severity(score: int, thresholds: SeverityThresholds) -> str:
+    if score >= thresholds.critical:
+        return "critical"
+    if score >= thresholds.high:
+        return "high"
+    if score >= thresholds.medium:
+        return "medium"
+    return "low"
+
+
+def build_issue(
+    thresholds: SeverityThresholds,
+    category: str,
+    title: str,
+    detail: str,
+    score: int,
+    fix_suggestion: str,
+    line_number: Optional[int] = None,
+    code_snippet: Optional[str] = None,
+    source: str = "rule",
+    confidence: float = 0.78,
+    risk_tags: Optional[List[str]] = None,
+    decision_trace: Optional[List[str]] = None,
+) -> Issue:
+    trace = decision_trace or [
+        f"Matched category '{category}' with score {score}",
+        "Mapped score to severity threshold",
+        "Generated deterministic fix suggestion",
+    ]
+    return Issue(
+        category=category,
+        title=title,
+        detail=detail,
+        score=score,
+        severity=score_to_severity(score, thresholds),
+        line_number=line_number,
+        fix_suggestion=fix_suggestion,
+        code_snippet=code_snippet,
+        source=source,
+        confidence=max(0.0, min(confidence, 1.0)),
+        risk_tags=risk_tags or [category],
+        decision_trace=trace,
+    )
+
+
+def rule_based_slop_detection(code: str, language: str, thresholds: SeverityThresholds) -> List[Issue]:
+    issues: List[Issue] = []
+    lines = code.splitlines()
+
+    for idx, line in enumerate(lines, start=1):
+        if len(line) > 120:
+            issues.append(
+                build_issue(
+                    thresholds,
+                    "complexity",
+                    "Overly long line",
+                    f"Line {idx} is {len(line)} characters and is hard to review.",
+                    55,
+                    "Wrap the statement into smaller expressions and use helper variables.",
+                    idx,
+                    line.strip(),
+                )
+            )
+
+        if re.search(r"(password|secret|token|api_key)\s*=\s*['\"][^'\"]+['\"]", line, re.IGNORECASE):
+            issues.append(
+                build_issue(
+                    thresholds,
+                    "security",
+                    "Hardcoded secret-like value",
+                    f"Potential credential detected on line {idx}.",
+                    92,
+                    "Move secrets to environment variables and read them at runtime.",
+                    idx,
+                    line.strip(),
+                )
+            )
+
+        if re.search(r"\b(eval|exec)\s*\(", line):
+            issues.append(
+                build_issue(
+                    thresholds,
+                    "security",
+                    "Dynamic execution risk",
+                    f"Dynamic execution detected on line {idx}.",
+                    88,
+                    "Replace eval/exec with explicit parsing or allowlisted operations.",
+                    idx,
+                    line.strip(),
+                )
+            )
+
+        var_match = re.search(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*=", line)
+        if var_match:
+            var_name = var_match.group(1)
+            if len(var_name) <= 2 and var_name not in {"i", "j", "k", "x", "y"}:
+                issues.append(
+                    build_issue(
+                        thresholds,
+                        "readability",
+                        "Poor variable naming",
+                        f"Variable '{var_name}' on line {idx} is not descriptive.",
+                        52,
+                        "Use a descriptive name that communicates business intent.",
+                        idx,
+                        line.strip(),
+                    )
+                )
+
+        if re.search(r"=\s*\d{3,}", line) and "const" not in line.lower():
+            issues.append(
+                build_issue(
+                    thresholds,
+                    "slop",
+                    "Hardcoded numeric value",
+                    f"Magic number detected on line {idx}.",
+                    46,
+                    "Extract this value into a named constant or configuration setting.",
+                    idx,
+                    line.strip(),
+                )
+            )
+
+    clean_lines = [line.strip() for line in lines if line.strip() and len(line.strip()) > 8]
+    line_counts: Dict[str, int] = {}
+    for line in clean_lines:
+        line_counts[line] = line_counts.get(line, 0) + 1
+    repeated = [line for line, count in line_counts.items() if count > 1]
+    for item in repeated[:4]:
+        issues.append(
+            build_issue(
+                thresholds,
+                "redundancy",
+                "Duplicate line detected",
+                "Repeated logic found in multiple places.",
+                61,
+                "Extract repeated logic into a reusable helper function.",
+                code_snippet=item,
+            )
+        )
+
+    max_indent = max((len(line) - len(line.lstrip(" ")) for line in lines if line.strip()), default=0)
+    if max_indent >= 16:
+        issues.append(
+            build_issue(
+                thresholds,
+                "complexity",
+                "Deep nesting",
+                "Deeply nested blocks reduce readability and increase bug risk.",
+                73,
+                "Use early returns and smaller functions to flatten control flow.",
+            )
+        )
+
+    function_pattern = r"^\s*def\s+\w+\s*\(" if language.lower() == "python" else r"^\s*(function\s+\w+\s*\(|const\s+\w+\s*=\s*\()"
+    function_lines = [idx for idx, line in enumerate(lines, start=1) if re.search(function_pattern, line)]
+    if len(function_lines) >= 8:
+        issues.append(
+            build_issue(
+                thresholds,
+                "architecture",
+                "High function count in single file",
+                "This file has many functions and may be doing too much.",
+                58,
+                "Split responsibilities into modules by domain.",
+            )
+        )
+
+    return issues[:25]
+
+
+def generate_summary(issues: List[Issue]) -> str:
+    if not issues:
+        return "No major slop detected. Code appears clean with minor improvements possible."
+    critical = sum(1 for issue in issues if issue.severity == "critical")
+    high = sum(1 for issue in issues if issue.severity == "high")
+    return f"Detected {len(issues)} issues ({critical} critical, {high} high). Prioritize security and complexity fixes first."
+
+
+def generate_documentation(code: str, language: str) -> str:
+    lines = code.splitlines()
+    function_docs: List[str] = []
+    if language.lower() == "python":
+        for line in lines:
+            match = re.search(r"^\s*def\s+([a-zA-Z0-9_]+)\((.*?)\):", line)
+            if match:
+                function_docs.append(f"- `{match.group(1)}`({match.group(2)})")
+    else:
+        for line in lines:
+            match = re.search(r"^\s*function\s+([a-zA-Z0-9_]+)\((.*?)\)", line)
+            arrow_match = re.search(r"^\s*const\s+([a-zA-Z0-9_]+)\s*=\s*\((.*?)\)\s*=>", line)
+            if match:
+                function_docs.append(f"- `{match.group(1)}`({match.group(2)})")
+            elif arrow_match:
+                function_docs.append(f"- `{arrow_match.group(1)}`({arrow_match.group(2)})")
+
+    documentation = [
+        "# Generated Documentation",
+        "",
+        "## Purpose",
+        "This file was analyzed by Slop and Code Doctor to improve maintainability and clarity.",
+        "",
+        "## Main Functions",
+    ]
+    if function_docs:
+        documentation.extend(function_docs)
+    else:
+        documentation.append("- No explicit function signatures were detected.")
+
+    documentation.extend(
+        [
+            "",
+            "## Suggested Next Docs Steps",
+            "- Add module-level overview and architecture notes.",
+            "- Add argument/return type descriptions for public functions.",
+            "- Include examples for edge cases and failure behavior.",
+        ]
+    )
+
+    return "\n".join(documentation)
+
+
+def parse_json_from_text(text: str) -> Optional[Dict[str, Any]]:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{[\s\S]*\}", text)
+        if not match:
+            return None
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+
+
+def get_encryption_cipher() -> Fernet:
+    base_secret = f"{mongo_url}:{os.environ['DB_NAME']}:slop-code-doctor".encode("utf-8")
+    digest = hashlib.sha256(base_secret).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def encrypt_value(value: str) -> str:
+    if not value:
+        return ""
+    cipher = get_encryption_cipher()
+    return cipher.encrypt(value.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_value(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    cipher = get_encryption_cipher()
+    try:
+        return cipher.decrypt(value.encode("utf-8")).decode("utf-8")
+    except (InvalidToken, ValueError):
+        return None
+
+
+def mask_key(value: str) -> str:
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def build_default_provider_config(provider: str) -> Dict[str, Any]:
+    return {
+        "enabled": False,
+        "base_url": DEFAULT_BASE_URLS[provider],
+        "model": DEFAULT_MODELS[provider],
+        "api_key_encrypted": None,
+        "api_key_masked": None,
+        "key_configured": False,
+    }
+
+
+def build_default_settings_doc() -> Dict[str, Any]:
+    providers = {provider: build_default_provider_config(provider) for provider in PROVIDER_KEYS}
+    if os.environ.get("OLLAMA_BASE_URL"):
+        providers["ollama"]["base_url"] = os.environ["OLLAMA_BASE_URL"]
+    if os.environ.get("OLLAMA_MODEL"):
+        providers["ollama"]["model"] = os.environ["OLLAMA_MODEL"]
+    providers["ollama"]["enabled"] = bool(os.environ.get("OLLAMA_BASE_URL") and os.environ.get("OLLAMA_MODEL"))
+
+    return {
+        "id": "default",
+        "severity": SeverityThresholds().model_dump(),
+        "providers": providers,
+        "routing": {
+            "primary_provider": "ollama",
+            "fallback_enabled": True,
+            "fallback_provider": "openai_compatible",
+        },
+    }
+
+
+def normalize_settings_doc(raw: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = build_default_settings_doc()
+    normalized["severity"] = SeverityThresholds(**raw.get("severity", normalized["severity"])).model_dump()
+
+    providers_payload = raw.get("providers")
+    if isinstance(providers_payload, dict):
+        for provider in PROVIDER_KEYS:
+            merged = {**normalized["providers"][provider], **providers_payload.get(provider, {})}
+            normalized["providers"][provider] = merged
+    else:
+        normalized["providers"]["ollama"]["enabled"] = bool(raw.get("use_ollama", normalized["providers"]["ollama"]["enabled"]))
+        if raw.get("ollama_base_url"):
+            normalized["providers"]["ollama"]["base_url"] = raw["ollama_base_url"]
+        if raw.get("ollama_model"):
+            normalized["providers"]["ollama"]["model"] = raw["ollama_model"]
+
+    routing_payload = raw.get("routing")
+    if isinstance(routing_payload, dict):
+        normalized["routing"] = {
+            "primary_provider": routing_payload.get("primary_provider", normalized["routing"]["primary_provider"]),
+            "fallback_enabled": bool(routing_payload.get("fallback_enabled", normalized["routing"]["fallback_enabled"])),
+            "fallback_provider": routing_payload.get("fallback_provider", normalized["routing"]["fallback_provider"]),
+        }
+
+    if normalized["routing"]["primary_provider"] not in PROVIDER_KEYS:
+        normalized["routing"]["primary_provider"] = "ollama"
+    fallback_provider = normalized["routing"].get("fallback_provider")
+    if fallback_provider not in PROVIDER_KEYS:
+        normalized["routing"]["fallback_provider"] = "openai_compatible"
+
+    return normalized
+
+
+def to_public_settings(raw: Dict[str, Any]) -> AnalyzerSettings:
+    normalized = normalize_settings_doc(raw)
+    ollama_conf = normalized["providers"]["ollama"]
+    return AnalyzerSettings(
+        id=normalized["id"],
+        use_ollama=bool(ollama_conf.get("enabled")),
+        ollama_base_url=ollama_conf.get("base_url"),
+        ollama_model=ollama_conf.get("model"),
+        severity=SeverityThresholds(**normalized["severity"]),
+        providers={
+            provider: {
+                "enabled": bool(config.get("enabled")),
+                "base_url": config.get("base_url"),
+                "model": config.get("model"),
+                "key_configured": bool(config.get("key_configured")),
+                "api_key_masked": config.get("api_key_masked"),
+            }
+            for provider, config in normalized["providers"].items()
+        },
+        routing=normalized["routing"],
+    )
+
+
+def build_analysis_prompt(code: str, language: str) -> str:
+    return (
+        "You are a senior code reviewer. Return JSON only with keys: "
+        "ai_notes (string), documentation (string), extra_suggestions (array of strings). "
+        f"Language: {language}. Code:\n{code}"
+    )
+
+
+def call_provider_ollama(prompt: str, config: Dict[str, Any]) -> Optional[str]:
+    response = requests.post(
+        f"{config['base_url'].rstrip('/')}/api/generate",
+        json={"model": config["model"], "prompt": prompt, "stream": False},
+        timeout=25,
+    )
+    if response.status_code != 200:
+        return None
+    return response.json().get("response")
+
+
+def call_provider_openai_compatible(prompt: str, config: Dict[str, Any], api_key: str) -> Optional[str]:
+    response = requests.post(
+        f"{config['base_url'].rstrip('/')}/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": config["model"],
+            "temperature": 0.1,
+            "messages": [
+                {"role": "system", "content": "You return strict JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+        },
+        timeout=30,
+    )
+    if response.status_code != 200:
+        return None
+    choices = response.json().get("choices", [])
+    if not choices:
+        return None
+    return choices[0].get("message", {}).get("content")
+
+
+def call_provider_gemini(prompt: str, config: Dict[str, Any], api_key: str) -> Optional[str]:
+    response = requests.post(
+        f"{config['base_url'].rstrip('/')}/models/{config['model']}:generateContent?key={api_key}",
+        headers={"Content-Type": "application/json"},
+        json={"contents": [{"parts": [{"text": prompt}]}]},
+        timeout=30,
+    )
+    if response.status_code != 200:
+        return None
+    candidates = response.json().get("candidates", [])
+    if not candidates:
+        return None
+    parts = candidates[0].get("content", {}).get("parts", [])
+    if not parts:
+        return None
+    return parts[0].get("text")
+
+
+def call_provider_anthropic(prompt: str, config: Dict[str, Any], api_key: str) -> Optional[str]:
+    response = requests.post(
+        f"{config['base_url'].rstrip('/')}/messages",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": config["model"],
+            "max_tokens": 800,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        timeout=30,
+    )
+    if response.status_code != 200:
+        return None
+    content = response.json().get("content", [])
+    if not content:
+        return None
+    return content[0].get("text")
+
+
+def call_llm_sync(code: str, language: str, settings_doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    prompt = build_analysis_prompt(code, language)
+    providers = settings_doc.get("providers", {})
+    routing = settings_doc.get("routing", {})
+    primary = routing.get("primary_provider", "ollama")
+    order = [primary]
+    if routing.get("fallback_enabled"):
+        fallback = routing.get("fallback_provider")
+        if fallback and fallback not in order:
+            order.append(fallback)
+
+    for provider_name in order:
+        config = providers.get(provider_name) or {}
+        if not config.get("enabled"):
+            continue
+        try:
+            raw_response: Optional[str] = None
+            if provider_name == "ollama":
+                raw_response = call_provider_ollama(prompt, config)
+            elif provider_name == "openai_compatible":
+                api_key = decrypt_value(config.get("api_key_encrypted"))
+                if api_key:
+                    raw_response = call_provider_openai_compatible(prompt, config, api_key)
+            elif provider_name == "gemini":
+                api_key = decrypt_value(config.get("api_key_encrypted"))
+                if api_key:
+                    raw_response = call_provider_gemini(prompt, config, api_key)
+            elif provider_name == "anthropic":
+                api_key = decrypt_value(config.get("api_key_encrypted"))
+                if api_key:
+                    raw_response = call_provider_anthropic(prompt, config, api_key)
+
+            if not raw_response:
+                continue
+            parsed = parse_json_from_text(raw_response)
+            if parsed:
+                parsed["provider_used"] = provider_name
+                return parsed
+        except requests.RequestException:
+            continue
+
+    return None
+
+
+async def call_llm_analysis(code: str, language: str, settings_doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    return await asyncio.to_thread(call_llm_sync, code, language, settings_doc)
+
+
+def _ping_ollama(base_url: str) -> bool:
+    try:
+        ping = requests.get(f"{base_url.rstrip('/')}/api/tags", timeout=3)
+        return ping.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+async def check_ollama_ready(base_url: Optional[str]) -> bool:
+    if not base_url:
+        return False
+    return await asyncio.to_thread(_ping_ollama, base_url)
+
+
+def get_file_extension(file_path: str) -> str:
+    return Path(file_path).suffix.lower()
+
+
+def detect_language_from_path(file_path: str) -> str:
+    extension = get_file_extension(file_path)
+    if extension == ".py":
+        return "python"
+    if extension in {".js", ".jsx"}:
+        return "javascript"
+    if extension in {".ts", ".tsx"}:
+        return "typescript"
+    return "text"
+
+
+def is_supported_repo_file(file_path: str) -> bool:
+    return get_file_extension(file_path) in SUPPORTED_REPO_EXTENSIONS
+
+
+def to_env_name(variable_name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "_", variable_name).upper().strip("_") or "SECRET_VALUE"
+
+
+def build_repository_summary(fixes: List[FixProposal], file_count: int) -> str:
+    if not fixes:
+        return f"Scanned {file_count} files. No auto-applicable fixes found."
+    critical_count = sum(1 for fix in fixes if fix.severity == "critical")
+    high_count = sum(1 for fix in fixes if fix.severity == "high")
+    return (
+        f"Scanned {file_count} files and found {len(fixes)} fix candidates "
+        f"({critical_count} critical, {high_count} high)."
+    )
+
+
+def generate_repository_fix_proposals(files: List[RepositoryFile], thresholds: SeverityThresholds) -> List[FixProposal]:
+    proposals: List[FixProposal] = []
+
+    for repo_file in files:
+        extension = get_file_extension(repo_file.path)
+        if extension not in {".py", ".js", ".jsx"}:
+            continue
+
+        lines = repo_file.content.splitlines()
+        for idx, line in enumerate(lines, start=1):
+            if extension == ".py":
+                secret_match = re.match(
+                    r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*=\s*['\"][^'\"]+['\"]\s*$", line
+                )
+                if secret_match:
+                    indent, var_name = secret_match.group(1), secret_match.group(2)
+                    if re.search(r"(password|secret|token|api_key)", var_name, re.IGNORECASE):
+                        env_name = to_env_name(var_name)
+                        replacement_line = f'{indent}{var_name} = os.environ.get("{env_name}")'
+                        proposals.append(
+                            FixProposal(
+                                file_path=repo_file.path,
+                                line_number=idx,
+                                title="Replace hardcoded secret",
+                                detail="Use environment variable lookup instead of hardcoded credential.",
+                                severity=score_to_severity(92, thresholds),
+                                score=92,
+                                original_line=line,
+                                replacement_line=replacement_line,
+                            )
+                        )
+
+                eval_assign_match = re.match(
+                    r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*=\s*eval\((.+)\)\s*$", line
+                )
+                if eval_assign_match:
+                    indent, lhs, expression = (
+                        eval_assign_match.group(1),
+                        eval_assign_match.group(2),
+                        eval_assign_match.group(3).strip(),
+                    )
+                    replacement_line = f"{indent}{lhs} = ast.literal_eval({expression})"
+                    proposals.append(
+                        FixProposal(
+                            file_path=repo_file.path,
+                            line_number=idx,
+                            title="Safer evaluation method",
+                            detail="Replace eval() with ast.literal_eval() for safer parsing.",
+                            severity=score_to_severity(86, thresholds),
+                            score=86,
+                            original_line=line,
+                            replacement_line=replacement_line,
+                        )
+                    )
+
+            if extension in {".js", ".jsx"}:
+                js_secret_match = re.match(
+                    r"^(\s*)(?:(const|let|var)\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*['\"][^'\"]+['\"]\s*;?\s*$",
+                    line,
+                )
+                if js_secret_match:
+                    indent, declaration, var_name = (
+                        js_secret_match.group(1),
+                        js_secret_match.group(2),
+                        js_secret_match.group(3),
+                    )
+                    if re.search(r"(password|secret|token|api_key)", var_name, re.IGNORECASE):
+                        env_name = to_env_name(var_name)
+                        declaration_prefix = f"{declaration} " if declaration else ""
+                        replacement_line = f"{indent}{declaration_prefix}{var_name} = process.env.{env_name};"
+                        proposals.append(
+                            FixProposal(
+                                file_path=repo_file.path,
+                                line_number=idx,
+                                title="Replace hardcoded secret",
+                                detail="Use process.env to avoid committed credentials.",
+                                severity=score_to_severity(90, thresholds),
+                                score=90,
+                                original_line=line,
+                                replacement_line=replacement_line,
+                            )
+                        )
+
+    return proposals[:500]
+
+
+def ensure_python_import_statement(content: str, module_name: str) -> str:
+    lines = content.splitlines()
+    import_regex = re.compile(rf"^\s*(import\s+{module_name}\b|from\s+{module_name}\b)")
+    if any(import_regex.search(line) for line in lines):
+        return content
+
+    insert_at = 0
+    if lines and lines[0].startswith("#!"):
+        insert_at = 1
+    if len(lines) > insert_at and re.search(r"coding[:=]", lines[insert_at]):
+        insert_at += 1
+
+    while insert_at < len(lines) and re.match(r"^\s*from\s+__future__\s+import\b", lines[insert_at]):
+        insert_at += 1
+
+    while insert_at < len(lines) and re.match(r"^\s*(import\s+\w+|from\s+\w+\s+import\b)", lines[insert_at]):
+        insert_at += 1
+
+    lines.insert(insert_at, f"import {module_name}")
+    updated = "\n".join(lines)
+    if content.endswith("\n"):
+        updated += "\n"
+    return updated
+
+
+def apply_fix_to_content(content: str, fix: Dict[str, Any]) -> tuple[str, bool]:
+    lines = content.splitlines()
+    line_number = fix.get("line_number", 0)
+    if line_number < 1 or line_number > len(lines):
+        return content, False
+
+    original_line = fix.get("original_line", "")
+    if lines[line_number - 1].strip() != original_line.strip():
+        return content, False
+
+    lines[line_number - 1] = fix.get("replacement_line", lines[line_number - 1])
+    updated = "\n".join(lines)
+    if content.endswith("\n"):
+        updated += "\n"
+    return updated, True
+
+
+def validate_python_syntax(file_path: str, content: str) -> Optional[str]:
+    try:
+        compile(content, file_path, "exec")
+        return None
+    except SyntaxError as error:
+        return f"{file_path}: Python syntax error on line {error.lineno}: {error.msg}"
+
+
+def validate_javascript_syntax(file_path: str, content: str) -> Optional[str]:
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=get_file_extension(file_path), delete=False, encoding="utf-8") as temp_file:
+            temp_file.write(content)
+            temp_path = temp_file.name
+
+        result = subprocess.run(
+            ["node", "--check", temp_path],
+            capture_output=True,
+            text=True,
+            timeout=12,
+            check=False,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.strip() or "unknown syntax error"
+            return f"{file_path}: JavaScript syntax check failed: {stderr}"
+        return None
+    except FileNotFoundError:
+        return None
+    except subprocess.TimeoutExpired:
+        return f"{file_path}: JavaScript syntax check timed out"
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def validate_updated_repository_files(updated_files: Dict[str, str], changed_paths: List[str]) -> Optional[str]:
+    for file_path in changed_paths:
+        extension = get_file_extension(file_path)
+        content = updated_files[file_path]
+        if extension == ".py":
+            syntax_error = validate_python_syntax(file_path, content)
+            if syntax_error:
+                return syntax_error
+        if extension in {".js", ".jsx"}:
+            syntax_error = validate_javascript_syntax(file_path, content)
+            if syntax_error:
+                return syntax_error
+    return None
+
+
+async def get_or_create_settings_doc() -> Dict[str, Any]:
+    existing = await db.app_settings.find_one({"id": "default"}, {"_id": 0})
+    if existing:
+        normalized = normalize_settings_doc(existing)
+        if normalized != existing:
+            await db.app_settings.update_one({"id": "default"}, {"$set": normalized}, upsert=True)
+        return normalized
+
+    initial = build_default_settings_doc()
+    await db.app_settings.insert_one(initial)
+    return initial
+
+
+@api_router.get("/")
+async def root():
+    return {"message": "Slop and Code Doctor API is running"}
+
+
+@api_router.get("/health")
+async def health():
+    settings_doc = await get_or_create_settings_doc()
+    ollama_config = settings_doc.get("providers", {}).get("ollama", {})
+    ollama_ready = await check_ollama_ready(ollama_config.get("base_url")) if ollama_config.get("enabled") else False
+    active_provider = settings_doc.get("routing", {}).get("primary_provider", "ollama")
+    return {
+        "status": "ok",
+        "ollama_configured": bool(ollama_config.get("enabled") and ollama_config.get("base_url") and ollama_config.get("model")),
+        "ollama_ready": ollama_ready,
+        "active_provider": active_provider,
+    }
+
+
+@api_router.post("/analyze", response_model=AnalysisReport)
+async def analyze_code(
+    payload: AnalyzeRequest,
+    x_actor_id: Optional[str] = Header(default=None),
+    x_user_role: Optional[str] = Header(default=None),
+):
+    started_at = perf_counter()
+    actor = resolve_actor_context(x_actor_id, x_user_role)
+    settings_doc = await get_or_create_settings_doc()
+    thresholds = SeverityThresholds(**settings_doc["severity"])
+    policy = await get_or_create_governance_policy()
+    cleaned_code = payload.code.strip()
+    if not cleaned_code:
+        raise HTTPException(status_code=400, detail="Code input cannot be empty")
+
+    quality_checks = run_data_validation_checks(cleaned_code, payload.language, policy)
+    ensure_checks_pass(quality_checks)
+
+    issues = rule_based_slop_detection(cleaned_code, payload.language, thresholds)
+    routing = settings_doc.get("routing", {})
+    selected_provider = routing.get("primary_provider", "ollama")
+    provider_allowed = selected_provider in policy.allowed_providers
+    ai_payload = None
+    if provider_allowed:
+        ai_payload = await call_llm_analysis(cleaned_code, payload.language, settings_doc)
+    else:
+        await record_security_event(
+            severity="medium",
+            event_type="provider-blocked-by-policy",
+            actor=actor,
+            details={"provider": selected_provider, "policy_version": policy.version},
+        )
+
+    mode = "rule-based"
+    ai_notes = None
+    documentation = generate_documentation(cleaned_code, payload.language)
+
+    if ai_payload:
+        mode = "hybrid"
+        provider_used = ai_payload.get("provider_used", "llm")
+        ai_notes = ai_payload.get("ai_notes")
+        if ai_payload.get("documentation"):
+            documentation = ai_payload["documentation"]
+        for suggestion in ai_payload.get("extra_suggestions", [])[:4]:
+            issues.append(
+                build_issue(
+                    thresholds,
+                    "ai-suggestion",
+                    "AI Refactor Opportunity",
+                    suggestion,
+                    49,
+                    "Apply the suggestion and rerun analysis to confirm improvement.",
+                    source=provider_used,
+                    confidence=0.61,
+                    risk_tags=["ai-suggestion", "refactor"],
+                    decision_trace=[
+                        f"LLM provider '{provider_used}' returned structured suggestion",
+                        "Suggestion normalized into issue item",
+                        "Severity mapped via configured thresholds",
+                    ],
+                )
+            )
+
+    redacted_issues = [redact_issue(issue) for issue in issues]
+    critical_count = sum(1 for issue in redacted_issues if issue.severity == "critical")
+    requires_reviewer = bool(policy.require_reviewer_for_high_risk and critical_count > 0)
+    governance_payload = {
+        "policy_version": policy.version,
+        "provider_allowed": provider_allowed,
+        "primary_provider": selected_provider,
+        "requires_reviewer_approval": requires_reviewer,
+        "transparency_mode": "detailed",
+    }
+    monitoring_payload = {
+        "analysis_ms": round((perf_counter() - started_at) * 1000, 2),
+        "issue_count": len(redacted_issues),
+        "critical_count": critical_count,
+    }
+
+    report = AnalysisReport(
+        filename=payload.filename or "untitled",
+        language=payload.language,
+        source_code=cleaned_code,
+        summary=generate_summary(redacted_issues),
+        issues=redacted_issues,
+        documentation=documentation,
+        ai_notes=ai_notes,
+        mode=mode,
+        governance=governance_payload,
+        quality_checks=quality_checks,
+        monitoring=monitoring_payload,
+    )
+
+    await db.reports.insert_one(report.model_dump())
+    await db.quality_metrics.insert_one(
+        {
+            "metric_id": str(uuid.uuid4()),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "report_id": report.report_id,
+            "analysis_ms": monitoring_payload["analysis_ms"],
+            "issue_count": monitoring_payload["issue_count"],
+            "critical_count": monitoring_payload["critical_count"],
+            "mode": mode,
+        }
+    )
+    await record_governance_event(
+        actor=actor,
+        action="analysis-run",
+        status="success",
+        details={
+            "report_id": report.report_id,
+            "mode": mode,
+            "provider": selected_provider,
+            "critical_count": critical_count,
+        },
+    )
+    return report
+
+
+@api_router.get("/reports", response_model=List[ReportSummary])
+async def list_reports():
+    docs = await db.reports.find({}, {"_id": 0, "source_code": 0, "documentation": 0, "ai_notes": 0}).sort("created_at", -1).to_list(200)
+    summaries: List[ReportSummary] = []
+    for doc in docs:
+        issues = doc.get("issues", [])
+        summaries.append(
+            ReportSummary(
+                report_id=doc["report_id"],
+                created_at=doc["created_at"],
+                filename=doc.get("filename", "untitled"),
+                language=doc.get("language", "unknown"),
+                summary=doc.get("summary", ""),
+                mode=doc.get("mode", "rule-based"),
+                issue_count=len(issues),
+                critical_count=sum(1 for issue in issues if issue.get("severity") == "critical"),
+            )
+        )
+    return summaries
+
+
+@api_router.get("/reports/{report_id}", response_model=AnalysisReport)
+async def get_report(report_id: str):
+    doc = await db.reports.find_one({"report_id": report_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return AnalysisReport(**doc)
+
+
+@api_router.post("/repository/analyze", response_model=RepositoryAnalysisResult)
+async def analyze_repository(payload: RepositoryAnalyzeRequest):
+    settings_doc = await get_or_create_settings_doc()
+    thresholds = SeverityThresholds(**settings_doc["severity"])
+    supported_files = [
+        RepositoryFile(path=file.path, content=file.content)
+        for file in payload.files
+        if is_supported_repo_file(file.path)
+    ]
+
+    if not supported_files:
+        raise HTTPException(status_code=400, detail="No supported files found in repository payload")
+
+    proposals = generate_repository_fix_proposals(supported_files, thresholds)
+    created_at = datetime.now(timezone.utc).isoformat()
+    session_id = str(uuid.uuid4())
+
+    session_doc = {
+        "session_id": session_id,
+        "repository_name": payload.repository_name,
+        "created_at": created_at,
+        "status": "analyzed",
+        "summary": build_repository_summary(proposals, len(supported_files)),
+        "file_count": len(supported_files),
+        "files": [file.model_dump() for file in supported_files],
+        "fixes": [proposal.model_dump() for proposal in proposals],
+        "applied_fix_count": 0,
+    }
+    await db.repository_sessions.insert_one(session_doc)
+
+    return RepositoryAnalysisResult(
+        session_id=session_id,
+        repository_name=payload.repository_name,
+        created_at=created_at,
+        file_count=len(supported_files),
+        status="analyzed",
+        summary=session_doc["summary"],
+        fixes=proposals,
+        applied_fix_count=0,
+    )
+
+
+@api_router.get("/repository/sessions/{session_id}", response_model=RepositoryAnalysisResult)
+async def get_repository_session(session_id: str):
+    session = await db.repository_sessions.find_one({"session_id": session_id}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=404, detail="Repository session not found")
+
+    return RepositoryAnalysisResult(
+        session_id=session["session_id"],
+        repository_name=session["repository_name"],
+        created_at=session["created_at"],
+        file_count=session["file_count"],
+        status=session["status"],
+        summary=session["summary"],
+        fixes=[FixProposal(**fix) for fix in session.get("fixes", [])],
+        applied_fix_count=session.get("applied_fix_count", 0),
+    )
+
+
+@api_router.post("/repository/apply-fixes", response_model=ApplyRepositoryFixesResponse)
+async def apply_repository_fixes(payload: ApplyRepositoryFixesRequest):
+    session = await db.repository_sessions.find_one({"session_id": payload.session_id}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=404, detail="Repository session not found")
+
+    all_fixes = session.get("fixes", [])
+    selected_ids = {fix["fix_id"] for fix in all_fixes} if payload.approve_all else set(payload.approved_fix_ids)
+    if not selected_ids:
+        raise HTTPException(status_code=400, detail="Select at least one fix or use approve_all")
+
+    file_map: Dict[str, str] = {file["path"]: file["content"] for file in session.get("files", [])}
+    fixes_by_file: Dict[str, List[Dict[str, Any]]] = {}
+    for fix in all_fixes:
+        if fix["fix_id"] in selected_ids and fix.get("auto_applicable", True):
+            fixes_by_file.setdefault(fix["file_path"], []).append(fix)
+
+    if not fixes_by_file:
+        raise HTTPException(status_code=400, detail="No auto-applicable fixes were selected")
+
+    applied_ids: List[str] = []
+    changed_paths: List[str] = []
+
+    for file_path, file_fixes in fixes_by_file.items():
+        original_content = file_map.get(file_path)
+        if original_content is None:
+            continue
+
+        updated_content = original_content
+        for fix in sorted(file_fixes, key=lambda item: item.get("line_number", 0), reverse=True):
+            updated_content, applied = apply_fix_to_content(updated_content, fix)
+            if applied:
+                applied_ids.append(fix["fix_id"])
+
+        if updated_content != original_content:
+            if get_file_extension(file_path) == ".py":
+                if "os.environ.get(" in updated_content:
+                    updated_content = ensure_python_import_statement(updated_content, "os")
+                if "ast.literal_eval(" in updated_content:
+                    updated_content = ensure_python_import_statement(updated_content, "ast")
+            file_map[file_path] = updated_content
+            changed_paths.append(file_path)
+
+    if not changed_paths:
+        raise HTTPException(status_code=400, detail="No fixes could be applied due to line mismatches")
+
+    syntax_error = validate_updated_repository_files(file_map, changed_paths)
+    if syntax_error:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Fix application blocked because validation failed. "
+                f"{syntax_error}"
+            ),
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+    updated_fixes: List[Dict[str, Any]] = []
+    for fix in all_fixes:
+        if fix["fix_id"] in selected_ids:
+            fix["approved"] = True
+        if fix["fix_id"] in applied_ids:
+            fix["applied_at"] = now
+        updated_fixes.append(fix)
+
+    patched_files = [{"path": path, "content": content} for path, content in file_map.items()]
+    await db.repository_sessions.update_one(
+        {"session_id": payload.session_id},
+        {
+            "$set": {
+                "status": "applied",
+                "updated_at": now,
+                "fixes": updated_fixes,
+                "applied_fix_count": len(applied_ids),
+                "patched_files": patched_files,
+            }
+        },
+    )
+
+    return ApplyRepositoryFixesResponse(
+        session_id=payload.session_id,
+        status="applied",
+        applied_fix_count=len(applied_ids),
+        updated_file_count=len(changed_paths),
+        message="Selected fixes were applied and validated successfully.",
+    )
+
+
+@api_router.get("/repository/sessions/{session_id}/download")
+async def download_patched_repository(session_id: str):
+    session = await db.repository_sessions.find_one(
+        {"session_id": session_id},
+        {"_id": 0, "repository_name": 1, "patched_files": 1},
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Repository session not found")
+
+    patched_files = session.get("patched_files")
+    if not patched_files:
+        raise HTTPException(status_code=400, detail="No patched repository is available for download")
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zip_stream:
+        for file in patched_files:
+            zip_stream.writestr(file["path"], file["content"])
+    buffer.seek(0)
+
+    repository_name = re.sub(r"[^a-zA-Z0-9_-]", "-", session.get("repository_name", "repository"))
+    headers = {"Content-Disposition": f'attachment; filename="{repository_name}-patched.zip"'}
+    return StreamingResponse(buffer, media_type="application/zip", headers=headers)
+
+
+@api_router.get("/governance/policy", response_model=GovernancePolicy)
+async def get_governance_policy():
+    return await get_or_create_governance_policy()
+
+
+@api_router.put("/governance/policy", response_model=GovernancePolicy)
+async def update_governance_policy(
+    payload: GovernancePolicyUpdate,
+    x_actor_id: Optional[str] = Header(default=None),
+    x_user_role: Optional[str] = Header(default=None),
+):
+    actor = resolve_actor_context(x_actor_id, x_user_role)
+    require_admin(actor)
+
+    invalid = [provider for provider in payload.allowed_providers if provider not in PROVIDER_KEYS]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid providers in policy: {invalid}")
+
+    current = await get_or_create_governance_policy()
+    updated = GovernancePolicy(
+        id="default",
+        version=current.version + 1,
+        allowed_providers=payload.allowed_providers,
+        blocked_patterns=payload.blocked_patterns,
+        max_code_length=payload.max_code_length,
+        require_reviewer_for_high_risk=payload.require_reviewer_for_high_risk,
+        min_transparency_confidence=payload.min_transparency_confidence,
+        updated_at=datetime.now(timezone.utc).isoformat(),
+        updated_by=actor.actor_id,
+    )
+    await db.governance_policies.update_one({"id": "default"}, {"$set": updated.model_dump()}, upsert=True)
+    await record_governance_event(
+        actor=actor,
+        action="governance-policy-update",
+        status="success",
+        details={"version": updated.version, "allowed_providers": payload.allowed_providers},
+    )
+    return updated
+
+
+@api_router.get("/governance/audit-logs", response_model=List[GovernanceAuditEvent])
+async def get_governance_audit_logs(limit: int = 50):
+    bounded_limit = max(1, min(limit, 200))
+    rows = await db.governance_audit_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(bounded_limit)
+    return [GovernanceAuditEvent(**row) for row in rows]
+
+
+@api_router.get("/security/events", response_model=List[SecurityEvent])
+async def get_security_events(limit: int = 50):
+    bounded_limit = max(1, min(limit, 200))
+    rows = await db.security_events.find({}, {"_id": 0}).sort("created_at", -1).to_list(bounded_limit)
+    return [SecurityEvent(**row) for row in rows]
+
+
+@api_router.get("/quality/metrics")
+async def get_quality_metrics(limit: int = 50):
+    bounded_limit = max(1, min(limit, 200))
+    rows = await db.quality_metrics.find({}, {"_id": 0}).sort("created_at", -1).to_list(bounded_limit)
+    return rows
+
+
+@api_router.get("/settings", response_model=AnalyzerSettings)
+async def get_settings():
+    settings_doc = await get_or_create_settings_doc()
+    return to_public_settings(settings_doc)
+
+
+@api_router.put("/settings", response_model=AnalyzerSettings)
+async def update_settings(payload: AnalyzerSettingsUpdate):
+    current_doc = await get_or_create_settings_doc()
+    updated_doc = normalize_settings_doc(current_doc)
+    updated_doc["severity"] = payload.severity.model_dump()
+
+    incoming_providers = payload.providers or {}
+    for provider in PROVIDER_KEYS:
+        provider_current = updated_doc["providers"].get(provider, build_default_provider_config(provider))
+        incoming = incoming_providers.get(provider, {})
+
+        if payload.providers is None and provider == "ollama":
+            if payload.use_ollama is not None:
+                incoming["enabled"] = payload.use_ollama
+            if payload.ollama_base_url is not None:
+                incoming["base_url"] = payload.ollama_base_url
+            if payload.ollama_model is not None:
+                incoming["model"] = payload.ollama_model
+
+        merged = {
+            **provider_current,
+            "enabled": bool(incoming.get("enabled", provider_current.get("enabled", False))),
+            "base_url": incoming.get("base_url", provider_current.get("base_url")),
+            "model": incoming.get("model", provider_current.get("model")),
+        }
+
+        if incoming.get("clear_api_key"):
+            merged["api_key_encrypted"] = None
+            merged["key_configured"] = False
+            merged["api_key_masked"] = None
+        else:
+            provided_key = incoming.get("api_key")
+            if isinstance(provided_key, str) and provided_key.strip():
+                encrypted = encrypt_value(provided_key.strip())
+                merged["api_key_encrypted"] = encrypted
+                merged["key_configured"] = True
+                merged["api_key_masked"] = mask_key(provided_key.strip())
+
+        merged.setdefault("api_key_encrypted", provider_current.get("api_key_encrypted"))
+        merged.setdefault("key_configured", provider_current.get("key_configured", False))
+        merged.setdefault("api_key_masked", provider_current.get("api_key_masked"))
+        updated_doc["providers"][provider] = merged
+
+    routing_payload = payload.routing or {}
+    routing = {
+        "primary_provider": routing_payload.get(
+            "primary_provider",
+            updated_doc.get("routing", {}).get("primary_provider", "ollama"),
+        ),
+        "fallback_enabled": bool(
+            routing_payload.get(
+                "fallback_enabled",
+                updated_doc.get("routing", {}).get("fallback_enabled", True),
+            )
+        ),
+        "fallback_provider": routing_payload.get(
+            "fallback_provider",
+            updated_doc.get("routing", {}).get("fallback_provider", "openai_compatible"),
+        ),
+    }
+    if routing["primary_provider"] not in PROVIDER_KEYS:
+        raise HTTPException(status_code=400, detail="Invalid primary provider")
+    if routing["fallback_provider"] not in PROVIDER_KEYS:
+        raise HTTPException(status_code=400, detail="Invalid fallback provider")
+    updated_doc["routing"] = routing
+
+    await db.app_settings.update_one(
+        {"id": "default"},
+        {"$set": updated_doc},
+        upsert=True,
+    )
+    return to_public_settings(updated_doc)
+
+
+@api_router.post("/integrations/git/webhook", response_model=IntegrationEvent)
+async def git_webhook(payload: GitWebhookEvent):
+    event = IntegrationEvent(
+        source="git",
+        event_type=payload.event_type,
+        status="received",
+        details=payload.model_dump(),
+    )
+    await db.integration_events.insert_one(event.model_dump())
+    return event
+
+
+@api_router.post("/integrations/ci/event", response_model=IntegrationEvent)
+async def ci_event(payload: CIEvent):
+    event = IntegrationEvent(
+        source="ci",
+        event_type="pipeline-status",
+        status=payload.status,
+        details=payload.model_dump(),
+    )
+    await db.integration_events.insert_one(event.model_dump())
+    return event
+
+
+@api_router.get("/integrations/events", response_model=List[IntegrationEvent])
+async def list_integration_events():
+    events = await db.integration_events.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    return [IntegrationEvent(**event) for event in events]
+
+
+app.include_router(api_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    client.close()
