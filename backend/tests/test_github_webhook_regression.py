@@ -10,7 +10,7 @@ All GitHub API calls are mocked. No real network calls.
 
 import os
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import requests as req_lib
