@@ -1822,7 +1822,7 @@ async def git_webhook(
             logger.warning("No webhook_secret configured — skipping HMAC verification.")
 
         action = body.get("action", "")
-        if action not in {"opened", "synchronize", "reopened"}:
+        if action not in {"opened", "synchronize", "reopened", None}:
             # Acknowledge non-analysis events without doing work
             event = IntegrationEvent(
                 source="github",
