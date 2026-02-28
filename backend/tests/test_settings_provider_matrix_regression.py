@@ -23,7 +23,9 @@ def api_client():
 
 
 class TestSettingsProviderMatrixRegression:
-    def test_get_settings_returns_provider_matrix_routing_and_legacy_fields(self, api_client, base_url):
+    def test_get_settings_returns_provider_matrix_routing_and_legacy_fields(
+        self, api_client, base_url
+    ):
         response = api_client.get(f"{base_url}/api/settings")
         assert response.status_code == 200
         data = response.json()
@@ -44,9 +46,19 @@ class TestSettingsProviderMatrixRegression:
         assert "ollama_base_url" in data
         assert "ollama_model" in data
 
-        assert data["routing"]["primary_provider"] in ["ollama", "openai_compatible", "gemini", "anthropic"]
+        assert data["routing"]["primary_provider"] in [
+            "ollama",
+            "openai_compatible",
+            "gemini",
+            "anthropic",
+        ]
         assert isinstance(data["routing"]["fallback_enabled"], bool)
-        assert data["routing"]["fallback_provider"] in ["ollama", "openai_compatible", "gemini", "anthropic"]
+        assert data["routing"]["fallback_provider"] in [
+            "ollama",
+            "openai_compatible",
+            "gemini",
+            "anthropic",
+        ]
 
     def test_put_settings_legacy_payload_still_works(self, api_client, base_url):
         before = api_client.get(f"{base_url}/api/settings")
@@ -57,7 +69,9 @@ class TestSettingsProviderMatrixRegression:
             "use_ollama": True,
             "ollama_base_url": "http://localhost:11434",
             "ollama_model": "llama3.1:8b",
-            "severity": previous.get("severity", {"critical": 85, "high": 70, "medium": 45, "low": 0}),
+            "severity": previous.get(
+                "severity", {"critical": 85, "high": 70, "medium": 45, "low": 0}
+            ),
         }
 
         update = api_client.put(f"{base_url}/api/settings", json=payload)
@@ -75,7 +89,9 @@ class TestSettingsProviderMatrixRegression:
         assert verify_data["ollama_base_url"] == "http://localhost:11434"
         assert verify_data["ollama_model"] == "llama3.1:8b"
 
-    def test_put_settings_new_payload_persists_routing_and_encrypted_key_flags(self, api_client, base_url):
+    def test_put_settings_new_payload_persists_routing_and_encrypted_key_flags(
+        self, api_client, base_url
+    ):
         unique_suffix = str(uuid.uuid4())[:8]
         test_key = f"TEST_OPENAI_KEY_{unique_suffix}_ABCDEFGHIJK"
 
@@ -85,30 +101,30 @@ class TestSettingsProviderMatrixRegression:
                 "ollama": {
                     "enabled": True,
                     "base_url": "http://localhost:11434",
-                    "model": "llama3.1:8b"
+                    "model": "llama3.1:8b",
                 },
                 "openai_compatible": {
                     "enabled": True,
                     "base_url": "https://api.openai.com/v1",
                     "model": "gpt-5.2",
-                    "api_key": test_key
+                    "api_key": test_key,
                 },
                 "gemini": {
                     "enabled": False,
                     "base_url": "https://generativelanguage.googleapis.com/v1beta",
-                    "model": "gemini-2.5-pro"
+                    "model": "gemini-2.5-pro",
                 },
                 "anthropic": {
                     "enabled": False,
                     "base_url": "https://api.anthropic.com/v1",
-                    "model": "claude-sonnet-4-6"
-                }
+                    "model": "claude-sonnet-4-6",
+                },
             },
             "routing": {
                 "primary_provider": "openai_compatible",
                 "fallback_enabled": True,
-                "fallback_provider": "ollama"
-            }
+                "fallback_provider": "ollama",
+            },
         }
 
         update = api_client.put(f"{base_url}/api/settings", json=payload)
@@ -138,17 +154,33 @@ class TestSettingsProviderMatrixRegression:
         set_payload = {
             "severity": {"critical": 85, "high": 70, "medium": 45, "low": 0},
             "providers": {
-                "ollama": {"enabled": True, "base_url": "http://localhost:11434", "model": "llama3.1:8b"},
+                "ollama": {
+                    "enabled": True,
+                    "base_url": "http://localhost:11434",
+                    "model": "llama3.1:8b",
+                },
                 "openai_compatible": {
                     "enabled": True,
                     "base_url": "https://api.openai.com/v1",
                     "model": "gpt-5.2",
                     "api_key": sentinel,
                 },
-                "gemini": {"enabled": False, "base_url": "https://generativelanguage.googleapis.com/v1beta", "model": "gemini-2.5-pro"},
-                "anthropic": {"enabled": False, "base_url": "https://api.anthropic.com/v1", "model": "claude-sonnet-4-6"},
+                "gemini": {
+                    "enabled": False,
+                    "base_url": "https://generativelanguage.googleapis.com/v1beta",
+                    "model": "gemini-2.5-pro",
+                },
+                "anthropic": {
+                    "enabled": False,
+                    "base_url": "https://api.anthropic.com/v1",
+                    "model": "claude-sonnet-4-6",
+                },
             },
-            "routing": {"primary_provider": "ollama", "fallback_enabled": True, "fallback_provider": "openai_compatible"},
+            "routing": {
+                "primary_provider": "ollama",
+                "fallback_enabled": True,
+                "fallback_provider": "openai_compatible",
+            },
         }
 
         put_resp = api_client.put(f"{base_url}/api/settings", json=set_payload)
@@ -186,11 +218,16 @@ class TestDownstreamRegressionAfterSettingsChanges:
             "repository_name": f"TEST-settings-repo-{suffix}",
             "files": [
                 {"path": "src/main.py", "content": "api_key = 'abc'\nprint('ok')\n"},
-                {"path": "src/helper.js", "content": "const api_token = 'xyz';\nconsole.log(api_token);\n"},
+                {
+                    "path": "src/helper.js",
+                    "content": "const api_token = 'xyz';\nconsole.log(api_token);\n",
+                },
             ],
         }
 
-        analyze_resp = api_client.post(f"{base_url}/api/repository/analyze", json=analyze_payload)
+        analyze_resp = api_client.post(
+            f"{base_url}/api/repository/analyze", json=analyze_payload
+        )
         assert analyze_resp.status_code == 200
         analyzed = analyze_resp.json()
         assert analyzed["status"] == "analyzed"
@@ -199,14 +236,20 @@ class TestDownstreamRegressionAfterSettingsChanges:
 
         apply_resp = api_client.post(
             f"{base_url}/api/repository/apply-fixes",
-            json={"session_id": analyzed["session_id"], "approve_all": True, "approved_fix_ids": []},
+            json={
+                "session_id": analyzed["session_id"],
+                "approve_all": True,
+                "approved_fix_ids": [],
+            },
         )
         assert apply_resp.status_code == 200
         applied = apply_resp.json()
         assert applied["status"] == "applied"
         assert applied["applied_fix_count"] >= 1
 
-        session_resp = api_client.get(f"{base_url}/api/repository/sessions/{analyzed['session_id']}")
+        session_resp = api_client.get(
+            f"{base_url}/api/repository/sessions/{analyzed['session_id']}"
+        )
         assert session_resp.status_code == 200
         session_data = session_resp.json()
         assert session_data["status"] == "applied"
