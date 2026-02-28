@@ -3,7 +3,7 @@ FROM node:18-alpine AS builder
 WORKDIR /app
 
 COPY frontend/package*.json ./
-RUN npm ci
+RUN npm install --legacy-peer-deps
 
 COPY frontend/ ./
 RUN REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL npm run build
