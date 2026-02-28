@@ -7,9 +7,10 @@ Tests:
   4. PUT /settings/github → stores token, returns masked form (no real GitHub calls made)
 All GitHub API calls are mocked. No real network calls.
 """
+
 import os
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import requests as req_lib
@@ -47,7 +48,9 @@ class TestGitHubSettingsUpdate:
     def test_save_github_token_stores_masked(self, api_client, base_url):
         """PUT /settings/github should store the token and return a masked version."""
         fake_token = "ghp_testtoken" + str(uuid.uuid4())[:8]
-        resp = api_client.put(f"{base_url}/api/settings/github", json={"token": fake_token})
+        resp = api_client.put(
+            f"{base_url}/api/settings/github", json={"token": fake_token}
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["token_configured"] is True
@@ -57,7 +60,9 @@ class TestGitHubSettingsUpdate:
 
     def test_clear_github_token(self, api_client, base_url):
         """PUT /settings/github with clear_token=true should remove the token."""
-        resp = api_client.put(f"{base_url}/api/settings/github", json={"clear_token": True})
+        resp = api_client.put(
+            f"{base_url}/api/settings/github", json={"clear_token": True}
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["token_configured"] is False
@@ -113,7 +118,9 @@ class TestWebhookGitHubPRPayload:
                 "name": "repo-no-token",
             },
         }
-        resp = api_client.post(f"{base_url}/api/integrations/git/webhook", json=pr_payload)
+        resp = api_client.post(
+            f"{base_url}/api/integrations/git/webhook", json=pr_payload
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["source"] == "github"
@@ -137,7 +144,9 @@ class TestWebhookGitHubPRPayload:
                 "name": "repo-ignored",
             },
         }
-        resp = api_client.post(f"{base_url}/api/integrations/git/webhook", json=pr_payload)
+        resp = api_client.post(
+            f"{base_url}/api/integrations/git/webhook", json=pr_payload
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"].startswith("ignored-action")

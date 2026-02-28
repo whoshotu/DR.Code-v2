@@ -25,7 +25,6 @@ import requests
 from starlette.middleware.cors import CORSMiddleware
 from time import perf_counter
 
-
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
@@ -110,7 +109,9 @@ class AnalyzeRequest(BaseModel):
 
 class AnalysisReport(BaseModel):
     report_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     filename: str
     language: str
     source_code: str
@@ -152,7 +153,9 @@ class CIEvent(BaseModel):
 
 class IntegrationEvent(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     source: str
     event_type: str
     status: str
@@ -160,6 +163,7 @@ class IntegrationEvent(BaseModel):
 
 
 # --- GitHub Integration Models (v2 addition) ---
+
 
 class GitHubSettingsUpdate(BaseModel):
     token: Optional[str] = None
@@ -175,6 +179,7 @@ class GitHubSettingsPublic(BaseModel):
 
 class GitHubPRWebhookPayload(BaseModel):
     """Shape of a real GitHub pull_request webhook event."""
+
     action: str
     pull_request: Dict[str, Any]
     repository: Dict[str, Any]
@@ -264,12 +269,18 @@ class ActorContext(BaseModel):
 class GovernancePolicy(BaseModel):
     id: str = "default"
     version: int = 1
-    allowed_providers: List[str] = Field(default_factory=lambda: ["ollama", "openai_compatible", "gemini", "anthropic"])
-    blocked_patterns: List[str] = Field(default_factory=lambda: ["rm -rf", "drop database", "private_key"])
+    allowed_providers: List[str] = Field(
+        default_factory=lambda: ["ollama", "openai_compatible", "gemini", "anthropic"]
+    )
+    blocked_patterns: List[str] = Field(
+        default_factory=lambda: ["rm -rf", "drop database", "private_key"]
+    )
     max_code_length: int = 70000
     require_reviewer_for_high_risk: bool = True
     min_transparency_confidence: float = Field(default=0.45, ge=0.0, le=1.0)
-    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     updated_by: str = "system"
 
 
@@ -283,7 +294,9 @@ class GovernancePolicyUpdate(BaseModel):
 
 class GovernanceAuditEvent(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     actor_id: str
     role: str
     action: str
@@ -293,7 +306,9 @@ class GovernanceAuditEvent(BaseModel):
 
 class SecurityEvent(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     severity: str
     event_type: str
     actor_id: str
@@ -308,12 +323,16 @@ def resolve_actor_context(actor_id: Optional[str], role: Optional[str]) -> Actor
     normalized_role = (role or "reviewer").strip().lower()
     if normalized_role not in ALLOWED_ROLES:
         normalized_role = "reviewer"
-    return ActorContext(actor_id=(actor_id or "anonymous").strip() or "anonymous", role=normalized_role)
+    return ActorContext(
+        actor_id=(actor_id or "anonymous").strip() or "anonymous", role=normalized_role
+    )
 
 
 def require_admin(actor: ActorContext):
     if actor.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin role is required for this action")
+        raise HTTPException(
+            status_code=403, detail="Admin role is required for this action"
+        )
 
 
 def redact_sensitive_text(text: Optional[str]) -> Optional[str]:
@@ -334,13 +353,28 @@ def redact_issue(issue: Issue) -> Issue:
     return issue
 
 
-async def record_governance_event(actor: ActorContext, action: str, status: str, details: Dict[str, Any]):
-    event = GovernanceAuditEvent(actor_id=actor.actor_id, role=actor.role, action=action, status=status, details=details)
+async def record_governance_event(
+    actor: ActorContext, action: str, status: str, details: Dict[str, Any]
+):
+    event = GovernanceAuditEvent(
+        actor_id=actor.actor_id,
+        role=actor.role,
+        action=action,
+        status=status,
+        details=details,
+    )
     await db.governance_audit_logs.insert_one(event.model_dump())
 
 
-async def record_security_event(severity: str, event_type: str, actor: ActorContext, details: Dict[str, Any]):
-    event = SecurityEvent(severity=severity, event_type=event_type, actor_id=actor.actor_id, details=details)
+async def record_security_event(
+    severity: str, event_type: str, actor: ActorContext, details: Dict[str, Any]
+):
+    event = SecurityEvent(
+        severity=severity,
+        event_type=event_type,
+        actor_id=actor.actor_id,
+        details=details,
+    )
     await db.security_events.insert_one(event.model_dump())
 
 
@@ -357,17 +391,51 @@ async def get_or_create_governance_policy() -> GovernancePolicy:
     return default_policy
 
 
-def run_data_validation_checks(code: str, language: str, policy: GovernancePolicy) -> List[Dict[str, Any]]:
+def run_data_validation_checks(
+    code: str, language: str, policy: GovernancePolicy
+) -> List[Dict[str, Any]]:
     checks: List[Dict[str, Any]] = []
 
-    checks.append({"check": "language-allowlist", "status": "passed" if language in ALLOWED_LANGUAGES else "failed", "detail": language})
-    checks.append({"check": "max-length", "status": "passed" if len(code) <= policy.max_code_length else "failed", "detail": len(code)})
-    checks.append({"check": "non-empty", "status": "passed" if code.strip() else "failed", "detail": "content present" if code.strip() else "empty"})
-    checks.append({"check": "null-byte", "status": "passed" if "\x00" not in code else "failed", "detail": "no null bytes"})
+    checks.append(
+        {
+            "check": "language-allowlist",
+            "status": "passed" if language in ALLOWED_LANGUAGES else "failed",
+            "detail": language,
+        }
+    )
+    checks.append(
+        {
+            "check": "max-length",
+            "status": "passed" if len(code) <= policy.max_code_length else "failed",
+            "detail": len(code),
+        }
+    )
+    checks.append(
+        {
+            "check": "non-empty",
+            "status": "passed" if code.strip() else "failed",
+            "detail": "content present" if code.strip() else "empty",
+        }
+    )
+    checks.append(
+        {
+            "check": "null-byte",
+            "status": "passed" if "\x00" not in code else "failed",
+            "detail": "no null bytes",
+        }
+    )
 
     lowered = code.lower()
-    blocked = [pattern for pattern in policy.blocked_patterns if pattern.lower() in lowered]
-    checks.append({"check": "blocked-patterns", "status": "failed" if blocked else "passed", "detail": blocked})
+    blocked = [
+        pattern for pattern in policy.blocked_patterns if pattern.lower() in lowered
+    ]
+    checks.append(
+        {
+            "check": "blocked-patterns",
+            "status": "failed" if blocked else "passed",
+            "detail": blocked,
+        }
+    )
 
     return checks
 
@@ -375,8 +443,12 @@ def run_data_validation_checks(code: str, language: str, policy: GovernancePolic
 def ensure_checks_pass(checks: List[Dict[str, Any]]):
     failed = [check for check in checks if check["status"] == "failed"]
     if failed:
-        summary = "; ".join([f"{check['check']} ({check['detail']})" for check in failed])
-        raise HTTPException(status_code=400, detail=f"Data validation failed: {summary}")
+        summary = "; ".join(
+            [f"{check['check']} ({check['detail']})" for check in failed]
+        )
+        raise HTTPException(
+            status_code=400, detail=f"Data validation failed: {summary}"
+        )
 
 
 def score_to_severity(score: int, thresholds: SeverityThresholds) -> str:
@@ -424,7 +496,9 @@ def build_issue(
     )
 
 
-def rule_based_slop_detection(code: str, language: str, thresholds: SeverityThresholds) -> List[Issue]:
+def rule_based_slop_detection(
+    code: str, language: str, thresholds: SeverityThresholds
+) -> List[Issue]:
     issues: List[Issue] = []
     lines = code.splitlines()
 
@@ -443,7 +517,11 @@ def rule_based_slop_detection(code: str, language: str, thresholds: SeverityThre
                 )
             )
 
-        if re.search(r"(password|secret|token|api_key)\s*=\s*['\"][^'\"]+['\"]", line, re.IGNORECASE):
+        if re.search(
+            r"(password|secret|token|api_key)\s*=\s*['\"][^'\"]+['\"]",
+            line,
+            re.IGNORECASE,
+        ):
             issues.append(
                 build_issue(
                     thresholds,
@@ -502,7 +580,9 @@ def rule_based_slop_detection(code: str, language: str, thresholds: SeverityThre
                 )
             )
 
-    clean_lines = [line.strip() for line in lines if line.strip() and len(line.strip()) > 8]
+    clean_lines = [
+        line.strip() for line in lines if line.strip() and len(line.strip()) > 8
+    ]
     line_counts: Dict[str, int] = {}
     for line in clean_lines:
         line_counts[line] = line_counts.get(line, 0) + 1
@@ -520,7 +600,9 @@ def rule_based_slop_detection(code: str, language: str, thresholds: SeverityThre
             )
         )
 
-    max_indent = max((len(line) - len(line.lstrip(" ")) for line in lines if line.strip()), default=0)
+    max_indent = max(
+        (len(line) - len(line.lstrip(" ")) for line in lines if line.strip()), default=0
+    )
     if max_indent >= 16:
         issues.append(
             build_issue(
@@ -533,8 +615,16 @@ def rule_based_slop_detection(code: str, language: str, thresholds: SeverityThre
             )
         )
 
-    function_pattern = r"^\s*def\s+\w+\s*\(" if language.lower() == "python" else r"^\s*(function\s+\w+\s*\(|const\s+\w+\s*=\s*\()"
-    function_lines = [idx for idx, line in enumerate(lines, start=1) if re.search(function_pattern, line)]
+    function_pattern = (
+        r"^\s*def\s+\w+\s*\("
+        if language.lower() == "python"
+        else r"^\s*(function\s+\w+\s*\(|const\s+\w+\s*=\s*\()"
+    )
+    function_lines = [
+        idx
+        for idx, line in enumerate(lines, start=1)
+        if re.search(function_pattern, line)
+    ]
     if len(function_lines) >= 8:
         issues.append(
             build_issue(
@@ -569,11 +659,15 @@ def generate_documentation(code: str, language: str) -> str:
     else:
         for line in lines:
             match = re.search(r"^\s*function\s+([a-zA-Z0-9_]+)\((.*?)\)", line)
-            arrow_match = re.search(r"^\s*const\s+([a-zA-Z0-9_]+)\s*=\s*\((.*?)\)\s*=>", line)
+            arrow_match = re.search(
+                r"^\s*const\s+([a-zA-Z0-9_]+)\s*=\s*\((.*?)\)\s*=>", line
+            )
             if match:
                 function_docs.append(f"- `{match.group(1)}`({match.group(2)})")
             elif arrow_match:
-                function_docs.append(f"- `{arrow_match.group(1)}`({arrow_match.group(2)})")
+                function_docs.append(
+                    f"- `{arrow_match.group(1)}`({arrow_match.group(2)})"
+                )
 
     documentation = [
         "# Generated Documentation",
@@ -615,7 +709,9 @@ def parse_json_from_text(text: str) -> Optional[Dict[str, Any]]:
 
 
 def get_encryption_cipher() -> Fernet:
-    base_secret = f"{mongo_url}:{os.environ['DB_NAME']}:slop-code-doctor".encode("utf-8")
+    base_secret = f"{mongo_url}:{os.environ['DB_NAME']}:slop-code-doctor".encode(
+        "utf-8"
+    )
     digest = hashlib.sha256(base_secret).digest()
     return Fernet(base64.urlsafe_b64encode(digest))
 
@@ -655,21 +751,31 @@ def build_default_provider_config(provider: str) -> Dict[str, Any]:
 
 
 def build_default_settings_doc() -> Dict[str, Any]:
-    providers = {provider: build_default_provider_config(provider) for provider in PROVIDER_KEYS}
+    providers = {
+        provider: build_default_provider_config(provider) for provider in PROVIDER_KEYS
+    }
     if os.environ.get("OLLAMA_BASE_URL"):
         providers["ollama"]["base_url"] = os.environ["OLLAMA_BASE_URL"]
     if os.environ.get("OLLAMA_MODEL"):
         providers["ollama"]["model"] = os.environ["OLLAMA_MODEL"]
-    providers["ollama"]["enabled"] = bool(os.environ.get("OLLAMA_BASE_URL") and os.environ.get("OLLAMA_MODEL"))
+    providers["ollama"]["enabled"] = bool(
+        os.environ.get("OLLAMA_BASE_URL") and os.environ.get("OLLAMA_MODEL")
+    )
 
     # v2: GitHub integration block — token stored encrypted, same pattern as AI provider keys
     github_token_env = os.environ.get("GITHUB_TOKEN")
     github_webhook_secret_env = os.environ.get("GITHUB_WEBHOOK_SECRET")
     github_block: Dict[str, Any] = {
-        "token_encrypted": encrypt_value(github_token_env) if github_token_env else None,
+        "token_encrypted": (
+            encrypt_value(github_token_env) if github_token_env else None
+        ),
         "token_masked": mask_key(github_token_env) if github_token_env else None,
         "token_configured": bool(github_token_env),
-        "webhook_secret_encrypted": encrypt_value(github_webhook_secret_env) if github_webhook_secret_env else None,
+        "webhook_secret_encrypted": (
+            encrypt_value(github_webhook_secret_env)
+            if github_webhook_secret_env
+            else None
+        ),
         "webhook_secret_configured": bool(github_webhook_secret_env),
     }
 
@@ -688,15 +794,22 @@ def build_default_settings_doc() -> Dict[str, Any]:
 
 def normalize_settings_doc(raw: Dict[str, Any]) -> Dict[str, Any]:
     normalized = build_default_settings_doc()
-    normalized["severity"] = SeverityThresholds(**raw.get("severity", normalized["severity"])).model_dump()
+    normalized["severity"] = SeverityThresholds(
+        **raw.get("severity", normalized["severity"])
+    ).model_dump()
 
     providers_payload = raw.get("providers")
     if isinstance(providers_payload, dict):
         for provider in PROVIDER_KEYS:
-            merged = {**normalized["providers"][provider], **providers_payload.get(provider, {})}
+            merged = {
+                **normalized["providers"][provider],
+                **providers_payload.get(provider, {}),
+            }
             normalized["providers"][provider] = merged
     else:
-        normalized["providers"]["ollama"]["enabled"] = bool(raw.get("use_ollama", normalized["providers"]["ollama"]["enabled"]))
+        normalized["providers"]["ollama"]["enabled"] = bool(
+            raw.get("use_ollama", normalized["providers"]["ollama"]["enabled"])
+        )
         if raw.get("ollama_base_url"):
             normalized["providers"]["ollama"]["base_url"] = raw["ollama_base_url"]
         if raw.get("ollama_model"):
@@ -705,9 +818,17 @@ def normalize_settings_doc(raw: Dict[str, Any]) -> Dict[str, Any]:
     routing_payload = raw.get("routing")
     if isinstance(routing_payload, dict):
         normalized["routing"] = {
-            "primary_provider": routing_payload.get("primary_provider", normalized["routing"]["primary_provider"]),
-            "fallback_enabled": bool(routing_payload.get("fallback_enabled", normalized["routing"]["fallback_enabled"])),
-            "fallback_provider": routing_payload.get("fallback_provider", normalized["routing"]["fallback_provider"]),
+            "primary_provider": routing_payload.get(
+                "primary_provider", normalized["routing"]["primary_provider"]
+            ),
+            "fallback_enabled": bool(
+                routing_payload.get(
+                    "fallback_enabled", normalized["routing"]["fallback_enabled"]
+                )
+            ),
+            "fallback_provider": routing_payload.get(
+                "fallback_provider", normalized["routing"]["fallback_provider"]
+            ),
         }
 
     if normalized["routing"]["primary_provider"] not in PROVIDER_KEYS:
@@ -761,10 +882,15 @@ def call_provider_ollama(prompt: str, config: Dict[str, Any]) -> Optional[str]:
     return response.json().get("response")
 
 
-def call_provider_openai_compatible(prompt: str, config: Dict[str, Any], api_key: str) -> Optional[str]:
+def call_provider_openai_compatible(
+    prompt: str, config: Dict[str, Any], api_key: str
+) -> Optional[str]:
     response = requests.post(
         f"{config['base_url'].rstrip('/')}/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json={
             "model": config["model"],
             "temperature": 0.1,
@@ -783,7 +909,9 @@ def call_provider_openai_compatible(prompt: str, config: Dict[str, Any], api_key
     return choices[0].get("message", {}).get("content")
 
 
-def call_provider_gemini(prompt: str, config: Dict[str, Any], api_key: str) -> Optional[str]:
+def call_provider_gemini(
+    prompt: str, config: Dict[str, Any], api_key: str
+) -> Optional[str]:
     response = requests.post(
         f"{config['base_url'].rstrip('/')}/models/{config['model']}:generateContent?key={api_key}",
         headers={"Content-Type": "application/json"},
@@ -801,7 +929,9 @@ def call_provider_gemini(prompt: str, config: Dict[str, Any], api_key: str) -> O
     return parts[0].get("text")
 
 
-def call_provider_anthropic(prompt: str, config: Dict[str, Any], api_key: str) -> Optional[str]:
+def call_provider_anthropic(
+    prompt: str, config: Dict[str, Any], api_key: str
+) -> Optional[str]:
     response = requests.post(
         f"{config['base_url'].rstrip('/')}/messages",
         headers={
@@ -824,7 +954,9 @@ def call_provider_anthropic(prompt: str, config: Dict[str, Any], api_key: str) -
     return content[0].get("text")
 
 
-def call_llm_sync(code: str, language: str, settings_doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def call_llm_sync(
+    code: str, language: str, settings_doc: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
     prompt = build_analysis_prompt(code, language)
     providers = settings_doc.get("providers", {})
     routing = settings_doc.get("routing", {})
@@ -846,7 +978,9 @@ def call_llm_sync(code: str, language: str, settings_doc: Dict[str, Any]) -> Opt
             elif provider_name == "openai_compatible":
                 api_key = decrypt_value(config.get("api_key_encrypted"))
                 if api_key:
-                    raw_response = call_provider_openai_compatible(prompt, config, api_key)
+                    raw_response = call_provider_openai_compatible(
+                        prompt, config, api_key
+                    )
             elif provider_name == "gemini":
                 api_key = decrypt_value(config.get("api_key_encrypted"))
                 if api_key:
@@ -868,7 +1002,9 @@ def call_llm_sync(code: str, language: str, settings_doc: Dict[str, Any]) -> Opt
     return None
 
 
-async def call_llm_analysis(code: str, language: str, settings_doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+async def call_llm_analysis(
+    code: str, language: str, settings_doc: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
     return await asyncio.to_thread(call_llm_sync, code, language, settings_doc)
 
 
@@ -906,7 +1042,10 @@ def is_supported_repo_file(file_path: str) -> bool:
 
 
 def to_env_name(variable_name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9]+", "_", variable_name).upper().strip("_") or "SECRET_VALUE"
+    return (
+        re.sub(r"[^A-Za-z0-9]+", "_", variable_name).upper().strip("_")
+        or "SECRET_VALUE"
+    )
 
 
 def build_repository_summary(fixes: List[FixProposal], file_count: int) -> str:
@@ -920,7 +1059,9 @@ def build_repository_summary(fixes: List[FixProposal], file_count: int) -> str:
     )
 
 
-def generate_repository_fix_proposals(files: List[RepositoryFile], thresholds: SeverityThresholds) -> List[FixProposal]:
+def generate_repository_fix_proposals(
+    files: List[RepositoryFile], thresholds: SeverityThresholds
+) -> List[FixProposal]:
     proposals: List[FixProposal] = []
 
     for repo_file in files:
@@ -936,9 +1077,13 @@ def generate_repository_fix_proposals(files: List[RepositoryFile], thresholds: S
                 )
                 if secret_match:
                     indent, var_name = secret_match.group(1), secret_match.group(2)
-                    if re.search(r"(password|secret|token|api_key)", var_name, re.IGNORECASE):
+                    if re.search(
+                        r"(password|secret|token|api_key)", var_name, re.IGNORECASE
+                    ):
                         env_name = to_env_name(var_name)
-                        replacement_line = f'{indent}{var_name} = os.environ.get("{env_name}")'
+                        replacement_line = (
+                            f'{indent}{var_name} = os.environ.get("{env_name}")'
+                        )
                         proposals.append(
                             FixProposal(
                                 file_path=repo_file.path,
@@ -986,7 +1131,9 @@ def generate_repository_fix_proposals(files: List[RepositoryFile], thresholds: S
                         js_secret_match.group(2),
                         js_secret_match.group(3),
                     )
-                    if re.search(r"(password|secret|token|api_key)", var_name, re.IGNORECASE):
+                    if re.search(
+                        r"(password|secret|token|api_key)", var_name, re.IGNORECASE
+                    ):
                         env_name = to_env_name(var_name)
                         declaration_prefix = f"{declaration} " if declaration else ""
                         replacement_line = f"{indent}{declaration_prefix}{var_name} = process.env.{env_name};"
@@ -1018,10 +1165,14 @@ def ensure_python_import_statement(content: str, module_name: str) -> str:
     if len(lines) > insert_at and re.search(r"coding[:=]", lines[insert_at]):
         insert_at += 1
 
-    while insert_at < len(lines) and re.match(r"^\s*from\s+__future__\s+import\b", lines[insert_at]):
+    while insert_at < len(lines) and re.match(
+        r"^\s*from\s+__future__\s+import\b", lines[insert_at]
+    ):
         insert_at += 1
 
-    while insert_at < len(lines) and re.match(r"^\s*(import\s+\w+|from\s+\w+\s+import\b)", lines[insert_at]):
+    while insert_at < len(lines) and re.match(
+        r"^\s*(import\s+\w+|from\s+\w+\s+import\b)", lines[insert_at]
+    ):
         insert_at += 1
 
     lines.insert(insert_at, f"import {module_name}")
@@ -1059,7 +1210,12 @@ def validate_python_syntax(file_path: str, content: str) -> Optional[str]:
 def validate_javascript_syntax(file_path: str, content: str) -> Optional[str]:
     temp_path = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=get_file_extension(file_path), delete=False, encoding="utf-8") as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=get_file_extension(file_path),
+            delete=False,
+            encoding="utf-8",
+        ) as temp_file:
             temp_file.write(content)
             temp_path = temp_file.name
 
@@ -1083,7 +1239,9 @@ def validate_javascript_syntax(file_path: str, content: str) -> Optional[str]:
             os.remove(temp_path)
 
 
-def validate_updated_repository_files(updated_files: Dict[str, str], changed_paths: List[str]) -> Optional[str]:
+def validate_updated_repository_files(
+    updated_files: Dict[str, str], changed_paths: List[str]
+) -> Optional[str]:
     for file_path in changed_paths:
         extension = get_file_extension(file_path)
         content = updated_files[file_path]
@@ -1103,7 +1261,9 @@ async def get_or_create_settings_doc() -> Dict[str, Any]:
     if existing:
         normalized = normalize_settings_doc(existing)
         if normalized != existing:
-            await db.app_settings.update_one({"id": "default"}, {"$set": normalized}, upsert=True)
+            await db.app_settings.update_one(
+                {"id": "default"}, {"$set": normalized}, upsert=True
+            )
         return normalized
 
     initial = build_default_settings_doc()
@@ -1120,11 +1280,19 @@ async def root():
 async def health():
     settings_doc = await get_or_create_settings_doc()
     ollama_config = settings_doc.get("providers", {}).get("ollama", {})
-    ollama_ready = await check_ollama_ready(ollama_config.get("base_url")) if ollama_config.get("enabled") else False
+    ollama_ready = (
+        await check_ollama_ready(ollama_config.get("base_url"))
+        if ollama_config.get("enabled")
+        else False
+    )
     active_provider = settings_doc.get("routing", {}).get("primary_provider", "ollama")
     return {
         "status": "ok",
-        "ollama_configured": bool(ollama_config.get("enabled") and ollama_config.get("base_url") and ollama_config.get("model")),
+        "ollama_configured": bool(
+            ollama_config.get("enabled")
+            and ollama_config.get("base_url")
+            and ollama_config.get("model")
+        ),
         "ollama_ready": ollama_ready,
         "active_provider": active_provider,
     }
@@ -1154,7 +1322,9 @@ async def analyze_code(
     provider_allowed = selected_provider in policy.allowed_providers
     ai_payload = None
     if provider_allowed:
-        ai_payload = await call_llm_analysis(cleaned_code, payload.language, settings_doc)
+        ai_payload = await call_llm_analysis(
+            cleaned_code, payload.language, settings_doc
+        )
     else:
         await record_security_event(
             severity="medium",
@@ -1195,7 +1365,9 @@ async def analyze_code(
 
     redacted_issues = [redact_issue(issue) for issue in issues]
     critical_count = sum(1 for issue in redacted_issues if issue.severity == "critical")
-    requires_reviewer = bool(policy.require_reviewer_for_high_risk and critical_count > 0)
+    requires_reviewer = bool(
+        policy.require_reviewer_for_high_risk and critical_count > 0
+    )
     governance_payload = {
         "policy_version": policy.version,
         "provider_allowed": provider_allowed,
@@ -1251,7 +1423,13 @@ async def analyze_code(
 
 @api_router.get("/reports", response_model=List[ReportSummary])
 async def list_reports():
-    docs = await db.reports.find({}, {"_id": 0, "source_code": 0, "documentation": 0, "ai_notes": 0}).sort("created_at", -1).to_list(200)
+    docs = (
+        await db.reports.find(
+            {}, {"_id": 0, "source_code": 0, "documentation": 0, "ai_notes": 0}
+        )
+        .sort("created_at", -1)
+        .to_list(200)
+    )
     summaries: List[ReportSummary] = []
     for doc in docs:
         issues = doc.get("issues", [])
@@ -1264,7 +1442,9 @@ async def list_reports():
                 summary=doc.get("summary", ""),
                 mode=doc.get("mode", "rule-based"),
                 issue_count=len(issues),
-                critical_count=sum(1 for issue in issues if issue.get("severity") == "critical"),
+                critical_count=sum(
+                    1 for issue in issues if issue.get("severity") == "critical"
+                ),
             )
         )
     return summaries
@@ -1289,7 +1469,9 @@ async def analyze_repository(payload: RepositoryAnalyzeRequest):
     ]
 
     if not supported_files:
-        raise HTTPException(status_code=400, detail="No supported files found in repository payload")
+        raise HTTPException(
+            status_code=400, detail="No supported files found in repository payload"
+        )
 
     proposals = generate_repository_fix_proposals(supported_files, thresholds)
     created_at = datetime.now(timezone.utc).isoformat()
@@ -1320,9 +1502,13 @@ async def analyze_repository(payload: RepositoryAnalyzeRequest):
     )
 
 
-@api_router.get("/repository/sessions/{session_id}", response_model=RepositoryAnalysisResult)
+@api_router.get(
+    "/repository/sessions/{session_id}", response_model=RepositoryAnalysisResult
+)
 async def get_repository_session(session_id: str):
-    session = await db.repository_sessions.find_one({"session_id": session_id}, {"_id": 0})
+    session = await db.repository_sessions.find_one(
+        {"session_id": session_id}, {"_id": 0}
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Repository session not found")
 
@@ -1340,23 +1526,35 @@ async def get_repository_session(session_id: str):
 
 @api_router.post("/repository/apply-fixes", response_model=ApplyRepositoryFixesResponse)
 async def apply_repository_fixes(payload: ApplyRepositoryFixesRequest):
-    session = await db.repository_sessions.find_one({"session_id": payload.session_id}, {"_id": 0})
+    session = await db.repository_sessions.find_one(
+        {"session_id": payload.session_id}, {"_id": 0}
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Repository session not found")
 
     all_fixes = session.get("fixes", [])
-    selected_ids = {fix["fix_id"] for fix in all_fixes} if payload.approve_all else set(payload.approved_fix_ids)
+    selected_ids = (
+        {fix["fix_id"] for fix in all_fixes}
+        if payload.approve_all
+        else set(payload.approved_fix_ids)
+    )
     if not selected_ids:
-        raise HTTPException(status_code=400, detail="Select at least one fix or use approve_all")
+        raise HTTPException(
+            status_code=400, detail="Select at least one fix or use approve_all"
+        )
 
-    file_map: Dict[str, str] = {file["path"]: file["content"] for file in session.get("files", [])}
+    file_map: Dict[str, str] = {
+        file["path"]: file["content"] for file in session.get("files", [])
+    }
     fixes_by_file: Dict[str, List[Dict[str, Any]]] = {}
     for fix in all_fixes:
         if fix["fix_id"] in selected_ids and fix.get("auto_applicable", True):
             fixes_by_file.setdefault(fix["file_path"], []).append(fix)
 
     if not fixes_by_file:
-        raise HTTPException(status_code=400, detail="No auto-applicable fixes were selected")
+        raise HTTPException(
+            status_code=400, detail="No auto-applicable fixes were selected"
+        )
 
     applied_ids: List[str] = []
     changed_paths: List[str] = []
@@ -1367,7 +1565,9 @@ async def apply_repository_fixes(payload: ApplyRepositoryFixesRequest):
             continue
 
         updated_content = original_content
-        for fix in sorted(file_fixes, key=lambda item: item.get("line_number", 0), reverse=True):
+        for fix in sorted(
+            file_fixes, key=lambda item: item.get("line_number", 0), reverse=True
+        ):
             updated_content, applied = apply_fix_to_content(updated_content, fix)
             if applied:
                 applied_ids.append(fix["fix_id"])
@@ -1375,22 +1575,27 @@ async def apply_repository_fixes(payload: ApplyRepositoryFixesRequest):
         if updated_content != original_content:
             if get_file_extension(file_path) == ".py":
                 if "os.environ.get(" in updated_content:
-                    updated_content = ensure_python_import_statement(updated_content, "os")
+                    updated_content = ensure_python_import_statement(
+                        updated_content, "os"
+                    )
                 if "ast.literal_eval(" in updated_content:
-                    updated_content = ensure_python_import_statement(updated_content, "ast")
+                    updated_content = ensure_python_import_statement(
+                        updated_content, "ast"
+                    )
             file_map[file_path] = updated_content
             changed_paths.append(file_path)
 
     if not changed_paths:
-        raise HTTPException(status_code=400, detail="No fixes could be applied due to line mismatches")
+        raise HTTPException(
+            status_code=400, detail="No fixes could be applied due to line mismatches"
+        )
 
     syntax_error = validate_updated_repository_files(file_map, changed_paths)
     if syntax_error:
         raise HTTPException(
             status_code=400,
             detail=(
-                "Fix application blocked because validation failed. "
-                f"{syntax_error}"
+                "Fix application blocked because validation failed. " f"{syntax_error}"
             ),
         )
 
@@ -1403,7 +1608,9 @@ async def apply_repository_fixes(payload: ApplyRepositoryFixesRequest):
             fix["applied_at"] = now
         updated_fixes.append(fix)
 
-    patched_files = [{"path": path, "content": content} for path, content in file_map.items()]
+    patched_files = [
+        {"path": path, "content": content} for path, content in file_map.items()
+    ]
     await db.repository_sessions.update_one(
         {"session_id": payload.session_id},
         {
@@ -1437,16 +1644,24 @@ async def download_patched_repository(session_id: str):
 
     patched_files = session.get("patched_files")
     if not patched_files:
-        raise HTTPException(status_code=400, detail="No patched repository is available for download")
+        raise HTTPException(
+            status_code=400, detail="No patched repository is available for download"
+        )
 
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zip_stream:
+    with zipfile.ZipFile(
+        buffer, mode="w", compression=zipfile.ZIP_DEFLATED
+    ) as zip_stream:
         for file in patched_files:
             zip_stream.writestr(file["path"], file["content"])
     buffer.seek(0)
 
-    repository_name = re.sub(r"[^a-zA-Z0-9_-]", "-", session.get("repository_name", "repository"))
-    headers = {"Content-Disposition": f'attachment; filename="{repository_name}-patched.zip"'}
+    repository_name = re.sub(
+        r"[^a-zA-Z0-9_-]", "-", session.get("repository_name", "repository")
+    )
+    headers = {
+        "Content-Disposition": f'attachment; filename="{repository_name}-patched.zip"'
+    }
     return StreamingResponse(buffer, media_type="application/zip", headers=headers)
 
 
@@ -1464,9 +1679,15 @@ async def update_governance_policy(
     actor = resolve_actor_context(x_actor_id, x_user_role)
     require_admin(actor)
 
-    invalid = [provider for provider in payload.allowed_providers if provider not in PROVIDER_KEYS]
+    invalid = [
+        provider
+        for provider in payload.allowed_providers
+        if provider not in PROVIDER_KEYS
+    ]
     if invalid:
-        raise HTTPException(status_code=400, detail=f"Invalid providers in policy: {invalid}")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid providers in policy: {invalid}"
+        )
 
     current = await get_or_create_governance_policy()
     updated = GovernancePolicy(
@@ -1480,12 +1701,17 @@ async def update_governance_policy(
         updated_at=datetime.now(timezone.utc).isoformat(),
         updated_by=actor.actor_id,
     )
-    await db.governance_policies.update_one({"id": "default"}, {"$set": updated.model_dump()}, upsert=True)
+    await db.governance_policies.update_one(
+        {"id": "default"}, {"$set": updated.model_dump()}, upsert=True
+    )
     await record_governance_event(
         actor=actor,
         action="governance-policy-update",
         status="success",
-        details={"version": updated.version, "allowed_providers": payload.allowed_providers},
+        details={
+            "version": updated.version,
+            "allowed_providers": payload.allowed_providers,
+        },
     )
     return updated
 
@@ -1493,21 +1719,33 @@ async def update_governance_policy(
 @api_router.get("/governance/audit-logs", response_model=List[GovernanceAuditEvent])
 async def get_governance_audit_logs(limit: int = 50):
     bounded_limit = max(1, min(limit, 200))
-    rows = await db.governance_audit_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(bounded_limit)
+    rows = (
+        await db.governance_audit_logs.find({}, {"_id": 0})
+        .sort("created_at", -1)
+        .to_list(bounded_limit)
+    )
     return [GovernanceAuditEvent(**row) for row in rows]
 
 
 @api_router.get("/security/events", response_model=List[SecurityEvent])
 async def get_security_events(limit: int = 50):
     bounded_limit = max(1, min(limit, 200))
-    rows = await db.security_events.find({}, {"_id": 0}).sort("created_at", -1).to_list(bounded_limit)
+    rows = (
+        await db.security_events.find({}, {"_id": 0})
+        .sort("created_at", -1)
+        .to_list(bounded_limit)
+    )
     return [SecurityEvent(**row) for row in rows]
 
 
 @api_router.get("/quality/metrics")
 async def get_quality_metrics(limit: int = 50):
     bounded_limit = max(1, min(limit, 200))
-    rows = await db.quality_metrics.find({}, {"_id": 0}).sort("created_at", -1).to_list(bounded_limit)
+    rows = (
+        await db.quality_metrics.find({}, {"_id": 0})
+        .sort("created_at", -1)
+        .to_list(bounded_limit)
+    )
     return rows
 
 
@@ -1525,7 +1763,9 @@ async def update_settings(payload: AnalyzerSettingsUpdate):
 
     incoming_providers = payload.providers or {}
     for provider in PROVIDER_KEYS:
-        provider_current = updated_doc["providers"].get(provider, build_default_provider_config(provider))
+        provider_current = updated_doc["providers"].get(
+            provider, build_default_provider_config(provider)
+        )
         incoming = incoming_providers.get(provider, {})
 
         if payload.providers is None and provider == "ollama":
@@ -1538,7 +1778,9 @@ async def update_settings(payload: AnalyzerSettingsUpdate):
 
         merged = {
             **provider_current,
-            "enabled": bool(incoming.get("enabled", provider_current.get("enabled", False))),
+            "enabled": bool(
+                incoming.get("enabled", provider_current.get("enabled", False))
+            ),
             "base_url": incoming.get("base_url", provider_current.get("base_url")),
             "model": incoming.get("model", provider_current.get("model")),
         }
@@ -1555,8 +1797,12 @@ async def update_settings(payload: AnalyzerSettingsUpdate):
                 merged["key_configured"] = True
                 merged["api_key_masked"] = mask_key(provided_key.strip())
 
-        merged.setdefault("api_key_encrypted", provider_current.get("api_key_encrypted"))
-        merged.setdefault("key_configured", provider_current.get("key_configured", False))
+        merged.setdefault(
+            "api_key_encrypted", provider_current.get("api_key_encrypted")
+        )
+        merged.setdefault(
+            "key_configured", provider_current.get("key_configured", False)
+        )
         merged.setdefault("api_key_masked", provider_current.get("api_key_masked"))
         updated_doc["providers"][provider] = merged
 
@@ -1574,7 +1820,9 @@ async def update_settings(payload: AnalyzerSettingsUpdate):
         ),
         "fallback_provider": routing_payload.get(
             "fallback_provider",
-            updated_doc.get("routing", {}).get("fallback_provider", "openai_compatible"),
+            updated_doc.get("routing", {}).get(
+                "fallback_provider", "openai_compatible"
+            ),
         ),
     }
     if routing["primary_provider"] not in PROVIDER_KEYS:
@@ -1618,12 +1866,16 @@ class GithubClient:
             "X-GitHub-Api-Version": "2022-11-28",
         }
 
-    def fetch_pr_files(self, owner: str, repo: str, pr_number: int, head_sha: str) -> List[RepositoryFile]:
+    def fetch_pr_files(
+        self, owner: str, repo: str, pr_number: int, head_sha: str
+    ) -> List[RepositoryFile]:
         """Return file content for all changed files in a PR that are in SUPPORTED_REPO_EXTENSIONS."""
         url = f"{self.BASE}/repos/{owner}/{repo}/pulls/{pr_number}/files"
         resp = requests.get(url, headers=self._headers, timeout=20)
         if resp.status_code != 200:
-            logger.warning("GitHub PR files fetch failed: %s %s", resp.status_code, resp.text[:200])
+            logger.warning(
+                "GitHub PR files fetch failed: %s %s", resp.status_code, resp.text[:200]
+            )
             return []
 
         result: List[RepositoryFile] = []
@@ -1639,7 +1891,9 @@ class GithubClient:
                 result.append(RepositoryFile(path=filename, content=content))
         return result
 
-    def _fetch_file_content(self, owner: str, repo: str, path: str, ref: str) -> Optional[str]:
+    def _fetch_file_content(
+        self, owner: str, repo: str, path: str, ref: str
+    ) -> Optional[str]:
         url = f"{self.BASE}/repos/{owner}/{repo}/contents/{path}"
         resp = requests.get(url, headers=self._headers, params={"ref": ref}, timeout=15)
         if resp.status_code != 200:
@@ -1651,7 +1905,9 @@ class GithubClient:
         except Exception:
             return None
 
-    def post_pr_inline_comment(self, owner: str, repo: str, pr_number: int, fix: FixProposal, head_sha: str) -> bool:
+    def post_pr_inline_comment(
+        self, owner: str, repo: str, pr_number: int, fix: FixProposal, head_sha: str
+    ) -> bool:
         """Post a single inline review comment on the PR for a given fix proposal."""
         severity_label = SEVERITY_LABELS.get(fix.severity, f"[{fix.severity.upper()}]")
         body = (
@@ -1669,11 +1925,21 @@ class GithubClient:
         }
         resp = requests.post(url, headers=self._headers, json=payload, timeout=15)
         if resp.status_code not in {200, 201}:
-            logger.warning("GitHub inline comment failed: %s %s", resp.status_code, resp.text[:200])
+            logger.warning(
+                "GitHub inline comment failed: %s %s", resp.status_code, resp.text[:200]
+            )
             return False
         return True
 
-    def post_pr_summary_comment(self, owner: str, repo: str, pr_number: int, summary: str, fix_count: int, critical_count: int) -> bool:
+    def post_pr_summary_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        summary: str,
+        fix_count: int,
+        critical_count: int,
+    ) -> bool:
         """Post a summary comment on the PR issue thread (not inline)."""
         body = (
             f"## DR.CODE Analysis Complete\n\n"
@@ -1684,11 +1950,15 @@ class GithubClient:
             f"*Inline comments have been added to the changed lines above.*"
         )
         url = f"{self.BASE}/repos/{owner}/{repo}/issues/{pr_number}/comments"
-        resp = requests.post(url, headers=self._headers, json={"body": body}, timeout=15)
+        resp = requests.post(
+            url, headers=self._headers, json={"body": body}, timeout=15
+        )
         return resp.status_code in {200, 201}
 
 
-def verify_github_signature(raw_body: bytes, secret: str, signature_header: Optional[str]) -> bool:
+def verify_github_signature(
+    raw_body: bytes, secret: str, signature_header: Optional[str]
+) -> bool:
     """Return True if the X-Hub-Signature-256 header matches the HMAC of the payload."""
     if not signature_header or not signature_header.startswith("sha256="):
         return False
@@ -1726,7 +1996,9 @@ async def _run_github_pr_pipeline_sync(
         if posted:
             comment_count += 1
 
-    github.post_pr_summary_comment(owner, repo, pr_number, summary, len(fixes), critical_count)
+    github.post_pr_summary_comment(
+        owner, repo, pr_number, summary, len(fixes), critical_count
+    )
     return {
         "status": "analyzed",
         "pr_number": pr_number,
@@ -1748,12 +2020,17 @@ async def run_github_pr_pipeline(
     token = decrypt_value(github_conf.get("token_encrypted"))
 
     if not token:
-        logger.warning("GitHub PR webhook received but no token configured — skipping analysis.")
+        logger.warning(
+            "GitHub PR webhook received but no token configured — skipping analysis."
+        )
         event = IntegrationEvent(
             source="github",
             event_type="pull_request",
             status="skipped-no-token",
-            details={"action": pr_payload.action, "repo": pr_payload.repository.get("full_name", "")},
+            details={
+                "action": pr_payload.action,
+                "repo": pr_payload.repository.get("full_name", ""),
+            },
         )
         await db.integration_events.insert_one(event.model_dump())
         return event
@@ -1815,20 +2092,25 @@ async def git_webhook(
         # HMAC signature check (only if webhook_secret is configured)
         webhook_secret = decrypt_value(github_conf.get("webhook_secret_encrypted"))
         if webhook_secret:
-            if not verify_github_signature(raw_body, webhook_secret, x_hub_signature_256):
+            if not verify_github_signature(
+                raw_body, webhook_secret, x_hub_signature_256
+            ):
                 logger.warning("GitHub webhook signature mismatch — request rejected.")
                 raise HTTPException(status_code=401, detail="Invalid webhook signature")
         else:
             logger.warning("No webhook_secret configured — skipping HMAC verification.")
 
         action = body.get("action", "")
-        if action not in {"opened", "synchronize", "reopened"}:
+        if action not in {"opened", "synchronize", "reopened", None}:
             # Acknowledge non-analysis events without doing work
             event = IntegrationEvent(
                 source="github",
                 event_type="pull_request",
                 status=f"ignored-action:{action}",
-                details={"action": action, "repo": body.get("repository", {}).get("full_name", "")},
+                details={
+                    "action": action,
+                    "repo": body.get("repository", {}).get("full_name", ""),
+                },
             )
             await db.integration_events.insert_one(event.model_dump())
             return event
@@ -1865,7 +2147,11 @@ async def ci_event(payload: CIEvent):
 
 @api_router.get("/integrations/events", response_model=List[IntegrationEvent])
 async def list_integration_events():
-    events = await db.integration_events.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    events = (
+        await db.integration_events.find({}, {"_id": 0})
+        .sort("created_at", -1)
+        .to_list(50)
+    )
     return [IntegrationEvent(**event) for event in events]
 
 

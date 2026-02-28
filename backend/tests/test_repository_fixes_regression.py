@@ -41,7 +41,7 @@ class TestRepositoryFixesWorkflow:
                 },
                 {
                     "path": "src/client.js",
-                    "content": "const api_token = \"xyz\";\nconsole.log(api_token);\n",
+                    "content": 'const api_token = "xyz";\nconsole.log(api_token);\n',
                 },
             ],
         )
@@ -62,18 +62,20 @@ class TestRepositoryFixesWorkflow:
         assert "file_path" in first_fix
         assert "replacement_line" in first_fix
 
-    def test_apply_selected_fixes_updates_session_and_enables_download(self, api_client, base_url):
+    def test_apply_selected_fixes_updates_session_and_enables_download(
+        self, api_client, base_url
+    ):
         suffix = str(uuid.uuid4())[:8]
         payload = _make_repo_payload(
             f"TEST-selective-{suffix}",
             [
                 {
                     "path": "service.py",
-                    "content": "secret = \"token-value\"\nprint(secret)\n",
+                    "content": 'secret = "token-value"\nprint(secret)\n',
                 },
                 {
                     "path": "utils.js",
-                    "content": "const db_password = \"pw\";\nconsole.log(db_password);\n",
+                    "content": 'const db_password = "pw";\nconsole.log(db_password);\n',
                 },
             ],
         )
@@ -100,7 +102,9 @@ class TestRepositoryFixesWorkflow:
         assert applied["applied_fix_count"] == 1
         assert applied["updated_file_count"] == 1
 
-        session_resp = api_client.get(f"{base_url}/api/repository/sessions/{analyzed['session_id']}")
+        session_resp = api_client.get(
+            f"{base_url}/api/repository/sessions/{analyzed['session_id']}"
+        )
         assert session_resp.status_code == 200
         session_data = session_resp.json()
         assert session_data["status"] == "applied"
@@ -114,7 +118,9 @@ class TestRepositoryFixesWorkflow:
             f"{base_url}/api/repository/sessions/{analyzed['session_id']}/download"
         )
         assert download_resp.status_code == 200
-        assert download_resp.headers.get("content-type", "").startswith("application/zip")
+        assert download_resp.headers.get("content-type", "").startswith(
+            "application/zip"
+        )
 
     def test_apply_all_approves_all_and_sets_applied_count(self, api_client, base_url):
         suffix = str(uuid.uuid4())[:8]
@@ -123,11 +129,11 @@ class TestRepositoryFixesWorkflow:
             [
                 {
                     "path": "main.py",
-                    "content": "password = \"secret\"\nvalue = eval(\"{'a':1}\")\n",
+                    "content": 'password = "secret"\nvalue = eval("{\'a\':1}")\n',
                 },
                 {
                     "path": "frontend.js",
-                    "content": "const api_secret = \"zzz\";\n",
+                    "content": 'const api_secret = "zzz";\n',
                 },
             ],
         )
@@ -152,7 +158,9 @@ class TestRepositoryFixesWorkflow:
         assert applied["applied_fix_count"] == total_fixes
         assert applied["updated_file_count"] >= 1
 
-        session_resp = api_client.get(f"{base_url}/api/repository/sessions/{analyzed['session_id']}")
+        session_resp = api_client.get(
+            f"{base_url}/api/repository/sessions/{analyzed['session_id']}"
+        )
         assert session_resp.status_code == 200
         session_data = session_resp.json()
         assert session_data["applied_fix_count"] == total_fixes
@@ -167,7 +175,7 @@ class TestRepositoryFixesWorkflow:
                     "path": "future_safe.py",
                     "content": (
                         "from __future__ import annotations\n"
-                        "secret_token = \"abc\"\n"
+                        'secret_token = "abc"\n'
                         "def make() -> dict[str, int]:\n"
                         "    return {'a': 1}\n"
                     ),
@@ -193,11 +201,15 @@ class TestRepositoryFixesWorkflow:
         assert applied["status"] == "applied"
         assert applied["applied_fix_count"] >= 1
 
-        session_resp = api_client.get(f"{base_url}/api/repository/sessions/{analyzed['session_id']}")
+        session_resp = api_client.get(
+            f"{base_url}/api/repository/sessions/{analyzed['session_id']}"
+        )
         assert session_resp.status_code == 200
         assert session_resp.json()["status"] == "applied"
 
-    def test_validation_guard_blocks_apply_when_python_parse_fails(self, api_client, base_url):
+    def test_validation_guard_blocks_apply_when_python_parse_fails(
+        self, api_client, base_url
+    ):
         suffix = str(uuid.uuid4())[:8]
         payload = _make_repo_payload(
             f"TEST-parse-guard-{suffix}",
@@ -205,9 +217,7 @@ class TestRepositoryFixesWorkflow:
                 {
                     "path": "broken_module.py",
                     "content": (
-                        "secret_token = \"abc\"\n"
-                        "def broken(:\n"
-                        "    return 1\n"
+                        'secret_token = "abc"\n' "def broken(:\n" "    return 1\n"
                     ),
                 }
             ],
@@ -217,7 +227,11 @@ class TestRepositoryFixesWorkflow:
         assert analyze.status_code == 200
         analyzed = analyze.json()
 
-        secret_fixes = [fix for fix in analyzed["fixes"] if "os.environ.get" in fix["replacement_line"]]
+        secret_fixes = [
+            fix
+            for fix in analyzed["fixes"]
+            if "os.environ.get" in fix["replacement_line"]
+        ]
         assert len(secret_fixes) == 1
 
         apply_resp = api_client.post(
@@ -233,7 +247,9 @@ class TestRepositoryFixesWorkflow:
         assert "validation failed" in detail
         assert "syntax error" in detail.lower()
 
-        session_resp = api_client.get(f"{base_url}/api/repository/sessions/{analyzed['session_id']}")
+        session_resp = api_client.get(
+            f"{base_url}/api/repository/sessions/{analyzed['session_id']}"
+        )
         assert session_resp.status_code == 200
         session_data = session_resp.json()
         assert session_data["status"] == "analyzed"

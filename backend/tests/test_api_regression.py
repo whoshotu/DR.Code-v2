@@ -63,7 +63,7 @@ class TestAnalyzeAndReports:
         payload = {
             "filename": "TEST_sample.py",
             "language": "python",
-            "code": "def add(a,b):\n  return a+b\npassword = \"123\"",
+            "code": 'def add(a,b):\n  return a+b\npassword = "123"',
         }
         response = api_client.post(f"{base_url}/api/analyze", json=payload)
         assert response.status_code == 200
@@ -115,7 +115,9 @@ class TestIntegrationStubs:
             "commit_sha": f"sha-{suffix}",
             "payload_preview": "TEST payload",
         }
-        git_resp = api_client.post(f"{base_url}/api/integrations/git/webhook", json=git_payload)
+        git_resp = api_client.post(
+            f"{base_url}/api/integrations/git/webhook", json=git_payload
+        )
         assert git_resp.status_code == 200
         git_data = git_resp.json()
         assert git_data["source"] == "git"
@@ -128,7 +130,9 @@ class TestIntegrationStubs:
             "branch": "main",
             "commit_sha": f"sha-{suffix}",
         }
-        ci_resp = api_client.post(f"{base_url}/api/integrations/ci/event", json=ci_payload)
+        ci_resp = api_client.post(
+            f"{base_url}/api/integrations/ci/event", json=ci_payload
+        )
         assert ci_resp.status_code == 200
         ci_data = ci_resp.json()
         assert ci_data["source"] == "ci"
