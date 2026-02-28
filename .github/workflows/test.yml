@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd frontend
-          npm install
+          npm install --legacy-peer-deps
       
       - name: Run frontend build check
         run: |
@@ -88,5 +88,5 @@ jobs:
       - name: Check frontend syntax
         run: |
           cd frontend
-          npm install
+          npm install --legacy-peer-deps
           npm run build
