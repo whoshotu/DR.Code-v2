@@ -217,8 +217,8 @@ class RepositoryAnalyzeRequest(BaseModel):
         if len(self.files) > 300:
             raise ValueError("Maximum 300 files allowed per repository scan")
         total_size = sum(len(file.content) for file in self.files)
-        if total_size > 1_500_000:
-            raise ValueError("Repository payload exceeds maximum size (1.5MB)")
+        if total_size > 3_000_000:
+            raise ValueError("Repository payload exceeds maximum size (3MB)")
         return self
 
 
