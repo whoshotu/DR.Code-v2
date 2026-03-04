@@ -1,4 +1,5 @@
 import { useState } from "react";
+import usePersistedState from "../hooks/usePersistedState";
 import { Copy, Check, FlaskConical, Loader2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
@@ -8,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { api } from "@/services/api";
 
 export default function GenerateTestsPanel({ initialCode = "", initialLanguage = "python", sanitizerEnabled = true }) {
-  const [code, setCode] = useState(initialCode);
+  const [code, setCode] = usePersistedState("drcode_generate_tests_code", initialCode);
   const [language, setLanguage] = useState(initialLanguage);
   const [framework, setFramework] = useState("pytest");
   const [includeEdgeCases, setIncludeEdgeCases] = useState(true);

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import usePersistedState from "../hooks/usePersistedState";
 import { Copy, Check, FileText, Loader2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
@@ -6,8 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/services/api";
 
-export default function GenerateDocstringsPanel({ initialCode = "", initialLanguage = "python" }) {
-  const [code, setCode] = useState(initialCode);
+export default function GenerateDocstringsPanel({ initialCode = "", initialLanguage = "python", sanitizerEnabled = true }) {
+  const [code, setCode] = usePersistedState("drcode_generate_docstrings_code", initialCode);
   const [language, setLanguage] = useState(initialLanguage);
   const [style, setStyle] = useState("google");
   const [loading, setLoading] = useState(false);

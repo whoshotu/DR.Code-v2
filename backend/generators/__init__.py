@@ -1,2 +1,1 @@
-# DR.CODE Generators Module
-# Code generation tools for unit tests, docstrings, and diagrams
+"""Generators package for code generation (no_slop, tests, docs, diagrams)."""
