@@ -2,6 +2,7 @@
 
 AI-powered code quality analysis with automated fix suggestions and GitHub PR integration.
 [![Test](https://github.com/whoshotu/DR.Code-v2/actions/workflows/test.yml/badge.svg)](https://github.com/whoshotu/DR.Code-v2/actions/workflows/test.yml)
+[![Build](https://github.com/whoshotu/DR.Code-v2/actions/workflows/build.yml/badge.svg)](https://github.com/whoshotu/DR.Code-v2/actions/workflows/build.yml)
 ## Choose Your Setup Type
 
 | # | Setup Type | Description |
