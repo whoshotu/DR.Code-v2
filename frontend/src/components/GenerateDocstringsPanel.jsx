@@ -28,6 +28,7 @@ export default function GenerateDocstringsPanel({ initialCode = "", initialLangu
         code,
         language,
         style,
+        sanitizer: sanitizerEnabled,
       });
       if (result.success) {
         setDocumentedCode(result.documented_code);

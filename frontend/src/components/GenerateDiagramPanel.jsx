@@ -13,7 +13,7 @@ mermaid.initialize({
   securityLevel: "loose",
 });
 
-export default function GenerateDiagramPanel({ initialCode = "", initialLanguage = "python" }) {
+export default function GenerateDiagramPanel({ initialCode = "", initialLanguage = "python", sanitizerEnabled = true }) {
   const [code, setCode] = useState(initialCode);
   const [language, setLanguage] = useState(initialLanguage);
   const [diagramType, setDiagramType] = useState("sequence");
@@ -53,6 +53,7 @@ export default function GenerateDiagramPanel({ initialCode = "", initialLanguage
         code,
         language,
         diagram_type: diagramType,
+        sanitizer: sanitizerEnabled,
       });
       if (result.success) {
         setDiagramSyntax(result.diagram_syntax);

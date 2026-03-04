@@ -1,6 +1,7 @@
 import ast
 import re
 from typing import Any, Dict, List, Optional, Tuple
+from generators.no_slop import sanitize_python_output
 
 from generators.test_generator import extract_functions, call_llm_for_tests
 
@@ -57,6 +58,7 @@ def generate_docstrings(
     code: str,
     language: str,
     style: str = "google",
+    sanitizer_enabled: bool = True,
 ) -> Dict[str, Any]:
     functions = extract_functions(code, language)
 
@@ -71,6 +73,8 @@ def generate_docstrings(
     prompt = build_docstring_prompt(code, language, style, functions)
 
     documented_code = call_llm_for_tests(prompt)
+    if sanitizer_enabled and documented_code:
+        documented_code = sanitize_python_output(documented_code)
 
     if not documented_code:
         return {

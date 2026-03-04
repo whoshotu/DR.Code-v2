@@ -1,6 +1,7 @@
 import ast
 import re
 from typing import Any, Dict, List, Optional
+from generators.no_slop import sanitize_mermaid_output
 
 from generators.test_generator import extract_functions, call_llm_for_tests
 
@@ -33,6 +34,7 @@ def generate_diagram(
     code: str,
     language: str,
     diagram_type: str = "sequence",
+    sanitizer_enabled: bool = True,
 ) -> Dict[str, Any]:
     functions = extract_functions(code, language)
 
@@ -47,6 +49,8 @@ def generate_diagram(
     prompt = build_diagram_prompt(code, language, diagram_type)
 
     diagram_syntax = call_llm_for_tests(prompt)
+    if sanitizer_enabled:
+        diagram_syntax = sanitize_mermaid_output(diagram_syntax)
 
     if not diagram_syntax:
         return {

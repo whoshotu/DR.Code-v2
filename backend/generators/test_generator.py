@@ -4,6 +4,7 @@ import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+from generators.no_slop import sanitize_python_output
 
 
 class FunctionInfo:
@@ -37,7 +38,7 @@ def extract_python_functions(code: str) -> List[FunctionInfo]:
     except SyntaxError:
         return []
 
-    functions = []
+    functions: List[FunctionInfo] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef):
             params = [arg.arg for arg in node.args.args]
@@ -78,10 +79,7 @@ def extract_python_functions(code: str) -> List[FunctionInfo]:
 
 
 def extract_js_functions(code: str) -> List[FunctionInfo]:
-    functions = []
-
-    func_pattern = r"(?:function\s+(\w+)|const\s+(\w+)\s*=\s*(?:async\s*)?\(?.*?\)?\s*=>)"
-    arrow_params_pattern = r"const\s+(\w+)\s*=\s*(?:async\s*)?\((.*?)\)"
+    functions: List[FunctionInfo] = []
 
     for match in re.finditer(r"function\s+(\w+)\s*\((.*?)\)", code):
         name = match.group(1)
@@ -210,7 +208,7 @@ def call_llm_for_tests(prompt: str, settings_doc: Optional[Dict[str, Any]] = Non
             async def get_settings():
                 return await get_or_create_settings_doc()
 
-            settings_doc = asyncio.run(get_settings())
+            settings_doc = __import__('asyncio').get_event_loop().run_until_complete(get_settings())
 
         providers = settings_doc.get("providers", {})
         routing = settings_doc.get("routing", {})
@@ -238,6 +236,7 @@ def generate_tests(
     language: str,
     framework: str = "pytest",
     include_edge_cases: bool = True,
+    sanitizer_enabled: bool = True,
 ) -> Dict[str, Any]:
     functions = extract_functions(code, language)
 
@@ -254,6 +253,8 @@ def generate_tests(
     prompt = build_test_prompt(code, language, framework, functions, include_edge_cases)
 
     test_code = call_llm_for_tests(prompt)
+    if sanitizer_enabled and test_code:
+        test_code = sanitize_python_output(test_code)
 
     if not test_code:
         return {

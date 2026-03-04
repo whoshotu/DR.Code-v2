@@ -30,6 +30,8 @@ export default function DashboardPage() {
     };
   }, [report]);
 
+  const [sanitizerEnabled, setSanitizerEnabled] = useState(true);
+
   const onUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -65,6 +67,11 @@ export default function DashboardPage() {
         </p>
       </div>
 
+      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 1rem' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }} data-testid="sanitizer-toggle">
+          <input type="checkbox" checked={sanitizerEnabled} onChange={(e) => setSanitizerEnabled(e.target.checked)} /> Sanitizer
+        </label>
+      </div>
       <Tabs defaultValue="analyze" className="w-full" data-testid="dashboard-tabs">
         <TabsList className="grid w-full grid-cols-4" data-testid="dashboard-tabs-list">
           <TabsTrigger value="analyze" data-testid="tab-analyze">Analyze</TabsTrigger>
@@ -159,15 +166,15 @@ export default function DashboardPage() {
         </TabsContent>
 
         <TabsContent value="tests" data-testid="tab-content-tests">
-          <GenerateTestsPanel initialCode={code} initialLanguage={language} />
+          <GenerateTestsPanel initialCode={code} initialLanguage={language} sanitizerEnabled={sanitizerEnabled} />
         </TabsContent>
 
         <TabsContent value="docstrings" data-testid="tab-content-docstrings">
-          <GenerateDocstringsPanel initialCode={code} initialLanguage={language} />
+          <GenerateDocstringsPanel initialCode={code} initialLanguage={language} sanitizerEnabled={sanitizerEnabled} />
         </TabsContent>
 
         <TabsContent value="diagram" data-testid="tab-content-diagram">
-          <GenerateDiagramPanel initialCode={code} initialLanguage={language} />
+          <GenerateDiagramPanel initialCode={code} initialLanguage={language} sanitizerEnabled={sanitizerEnabled} />
         </TabsContent>
       </Tabs>
     </section>

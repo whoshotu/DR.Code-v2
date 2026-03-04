@@ -68,7 +68,7 @@ class AnalyzerSettingsUpdate(BaseModel):
     routing: Optional[Dict[str, Any]] = None
 
 
-PROVIDER_KEYS = ["ollama", "openai_compatible", "gemini", "anthropic"]
+PROVIDER_KEYS = ["ollama", "openai_compatible", "gemini", "anthropic", "local"]
 
 DEFAULT_MODELS = {
     "ollama": "llama3.1:8b",
@@ -79,6 +79,7 @@ DEFAULT_MODELS = {
 
 DEFAULT_BASE_URLS = {
     "ollama": "http://localhost:11434",
+    "local": "http://localhost:8003",
     "openai_compatible": "https://api.openai.com/v1",
     "gemini": "https://generativelanguage.googleapis.com/v1beta",
     "anthropic": "https://api.anthropic.com/v1",
@@ -221,6 +222,7 @@ class GenerateDocstringsRequest(BaseModel):
     code: str
     language: str = "python"
     style: str = "google"
+    sanitizer: Optional[bool] = True
 
 
 class GenerateDocstringsResponse(BaseModel):
@@ -234,6 +236,7 @@ class GenerateDiagramRequest(BaseModel):
     code: str
     language: str = "python"
     diagram_type: str = "sequence"
+    sanitizer: Optional[bool] = True
 
 
 class GenerateDiagramResponse(BaseModel):
@@ -1150,8 +1153,12 @@ def call_llm_sync(
             continue
         try:
             raw_response: Optional[str] = None
-            if provider_name == "ollama":
-                raw_response = call_provider_ollama(prompt, config)
+        if provider_name == "ollama":
+            raw_response = call_provider_ollama(prompt, config)
+        elif provider_name == "local" and call_provider_local is not None:
+            # Local provider - uses a local model server
+            local_conf = providers.get("local", {})
+            raw_response = call_provider_local(prompt, local_conf)
             elif provider_name == "openai_compatible":
                 api_key = decrypt_value(config.get("api_key_encrypted"))
                 if api_key:
@@ -1600,13 +1607,19 @@ async def analyze_code(
 
 @api_router.post("/generate/tests", response_model=GenerateTestsResponse)
 async def generate_tests_endpoint(payload: GenerateTestsRequest):
-    from generators.test_generator import generate_tests
+from generators.test_generator import generate_tests
+try:
+    from local_provider import call_provider_local
+except Exception:
+    call_provider_local = None
 
+    sanitizer_flag = getattr(payload, "sanitizer", True) if hasattr(payload, "sanitizer") else True
     result = generate_tests(
         code=payload.code,
         language=payload.language,
         framework=payload.framework,
         include_edge_cases=payload.include_edge_cases,
+        sanitizer_enabled=sanitizer_flag,
     )
     return GenerateTestsResponse(**result)
 
@@ -1615,10 +1628,12 @@ async def generate_tests_endpoint(payload: GenerateTestsRequest):
 async def generate_docstrings_endpoint(payload: GenerateDocstringsRequest):
     from generators.docstring_generator import generate_docstrings
 
+    sanitizer_flag = getattr(payload, "sanitizer", True)
     result = generate_docstrings(
         code=payload.code,
         language=payload.language,
         style=payload.style,
+        sanitizer_enabled=sanitizer_flag,
     )
     return GenerateDocstringsResponse(**result)
 
@@ -1627,10 +1642,12 @@ async def generate_docstrings_endpoint(payload: GenerateDocstringsRequest):
 async def generate_diagram_endpoint(payload: GenerateDiagramRequest):
     from generators.diagram_generator import generate_diagram
 
+    sanitizer_flag = getattr(payload, "sanitizer", True)
     result = generate_diagram(
         code=payload.code,
         language=payload.language,
         diagram_type=payload.diagram_type,
+        sanitizer_enabled=sanitizer_flag,
     )
     return GenerateDiagramResponse(**result)
 

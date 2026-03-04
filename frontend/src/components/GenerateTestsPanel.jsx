@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api } from "@/services/api";
 
-export default function GenerateTestsPanel({ initialCode = "", initialLanguage = "python" }) {
+export default function GenerateTestsPanel({ initialCode = "", initialLanguage = "python", sanitizerEnabled = true }) {
   const [code, setCode] = useState(initialCode);
   const [language, setLanguage] = useState(initialLanguage);
   const [framework, setFramework] = useState("pytest");
@@ -33,6 +33,7 @@ export default function GenerateTestsPanel({ initialCode = "", initialLanguage =
         language,
         framework,
         include_edge_cases: includeEdgeCases,
+        sanitizer: sanitizerEnabled,
       });
       if (result.success) {
         setTestCode(result.test_code);
