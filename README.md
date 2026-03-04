@@ -6,12 +6,35 @@ AI-powered code quality analysis with automated fix suggestions and GitHub PR in
 
 | # | Setup Type | Description |
 |---|------------|-------------|
-| [1](#1-local-development) | Local Development | Run on your machine (Mac/Windows/Linux) |
-| [2](#2-docker-compose) | Docker Compose | All-in-one container setup |
-| [3](#3-cloud-deployment) | Cloud Deployment | Deploy to any container hosting service |
-| [4](#4-webhook-testing) | Webhook Testing | Test GitHub PR webhooks locally |
+| [1](#1-easy-setup) | Easy Setup | One-command script (recommended) |
+| [2](#2-local-development) | Local Development | Run on your machine (Mac/Windows/Linux) |
+| [3](#3-docker-compose) | Docker Compose | All-in-one container setup |
+| [4](#4-cloud-deployment) | Cloud Deployment | Deploy to any container hosting service |
+| [5](#5-webhook-testing) | Webhook Testing | Test GitHub PR webhooks locally |
 
-Jump to: [`#1`](#1-local-development) [`#2`](#2-docker-compose) [`#3`](#3-cloud-deployment) [`#4`](#4-webhook-testing)
+Jump to: [`#1`](#1-easy-setup) [`#2`](#2-local-development) [`#3`](#3-docker-compose) [`#4`](#4-cloud-deployment) [`#5`](#5-webhook-testing)
+
+---
+
+## Quick Start (Easy Setup)
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/whoshotu/DR.Code-v2.git
+cd DR.Code-v2
+
+# 2. Run the easy setup script
+./setup.sh
+
+# 3. That's it! Access at:
+#    - Frontend: http://localhost:3001
+#    - Backend:  http://localhost:8002
+```
+
+The setup script will guide you through:
+- MongoDB Atlas setup (free, no card required)
+- AI model choice: Ollama, LM Studio, or OpenAI
+- Optional GitHub integration
 
 ---
 
@@ -40,6 +63,11 @@ Visit: http://localhost:3001
 ---
 
 ## Prerequisites
+
+### Easy Setup (Recommended)
+- Docker Desktop (Mac/Windows) or Docker Engine (Linux)
+- MongoDB Atlas account (free tier - no card)
+- Ollama, LM Studio, or OpenAI (optional)
 
 ### All Setups
 
@@ -71,7 +99,45 @@ Visit: http://localhost:3001
 
 ---
 
-## 1. Local Development
+## 1. Easy Setup (Recommended)
+
+Run the automated setup script:
+
+```bash
+./setup.sh
+```
+
+The script will:
+1. Check Docker is installed
+2. Guide you to create a free MongoDB Atlas account
+3. Ask to install Ollama (or use LM Studio/OpenAI)
+4. Optionally add GitHub token for PR reviews
+5. Create `.env` and start containers
+
+### Manual Setup (without setup.sh)
+
+If you prefer manual setup:
+
+1. Copy the example environment file:
+```bash
+cp .env.example .env
+```
+
+2. Edit `.env` with your values:
+```bash
+MONGO_URL=mongodb+srv://username:password@cluster.mongodb.net/?appName=drcode
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=codellama
+```
+
+3. Start Docker:
+```bash
+docker-compose up -d
+```
+
+---
+
+## 2. Local Development
 
 ### Environment Variables
 
@@ -124,7 +190,7 @@ PORT=3001 npm start
 
 ---
 
-## 2. Docker Compose
+## 3. Docker Compose
 
 ### Setup
 
@@ -173,7 +239,7 @@ docker-compose up --build
 
 ---
 
-## 3. Cloud Deployment
+## 4. Cloud Deployment
 
 ### Universal Container Approach
 
@@ -229,7 +295,7 @@ doprax deploy --image drcode-backend
 
 ---
 
-## 4. Webhook Testing
+## 5. Webhook Testing
 
 ### Why Webhooks?
 
