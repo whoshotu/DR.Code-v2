@@ -13,7 +13,7 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const [filename, setFilename] = useState("sample.py");
   const [language, setLanguage] = useState("python");
-  const [code, setCode] = useState("def add(a,b):\n  return a+b\n\npassword = \"123456\"");
+  const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState(null);
 

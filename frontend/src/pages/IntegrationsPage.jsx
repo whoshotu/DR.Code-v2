@@ -13,8 +13,8 @@ const WEBHOOK_URL = `${BACKEND_URL}/api/integrations/git/webhook`;
 export default function IntegrationsPage() {
   const [events, setEvents] = useState([]);
   const [githubStatus, setGithubStatus] = useState(null);
-  const [gitPayload, setGitPayload] = useState({ repository: "repo/sample", event_type: "push", branch: "main", commit_sha: "abc123" });
-  const [ciPayload, setCiPayload] = useState({ pipeline: "test-suite", status: "passed", branch: "main", commit_sha: "abc123" });
+  const [gitPayload, setGitPayload] = useState({ repository: "", event_type: "", branch: "", commit_sha: "" });
+  const [ciPayload, setCiPayload] = useState({ pipeline: "", status: "", branch: "", commit_sha: "" });
 
   const loadAll = async () => {
     const [eventsData, statusData] = await Promise.all([
