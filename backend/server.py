@@ -637,6 +637,141 @@ def rule_based_slop_detection(
             )
         )
 
+    comment_pattern = r'#.*\b(TODO|FIXME|HACK|XXX|BUG|NOTE)\b'
+    for idx, line in enumerate(lines, start=1):
+        if re.search(comment_pattern, line, re.IGNORECASE):
+            issues.append(
+                build_issue(
+                    thresholds,
+                    "maintenance",
+                    "Incomplete work marker",
+                    f"Line {idx} contains an incomplete work marker (TODO/FIXME/HACK).",
+                    38,
+                    "Address the marker or document why it's pending.",
+                    idx,
+                    line.strip()[:80],
+                )
+            )
+
+    import_patterns = {
+        "python": r'^\s*(?:import|from\s+\w+\s+import)\s+([a-zA-Z_][a-zA-Z0-9_]*)',
+        "javascript": r'^\s*(?:import|require)\s+[\'"]([a-zA-Z_][a-zA-Z0-9_-]*)',
+        "java": r'^\s*import\s+([a-zA-Z_][a-zA-Z0-9_.]*)',
+        "go": r'^\s*import\s+"([a-zA-Z_][a-zA-Z0-9_/]*)"',
+    }
+    lang_key = language.lower() if language.lower() in import_patterns else "javascript"
+    import_re = import_patterns.get(lang_key, import_patterns["javascript"])
+    
+    imported_modules = set()
+    defined_names = set()
+    
+    for line in lines:
+        imp_match = re.search(import_re, line)
+        if imp_match:
+            imported_modules.add(imp_match.group(1).split('.')[0].split('/')[0])
+        
+        func_match = re.search(r'^\s*(?:def|function|const|class|class\s+\w+)[:{\s]+([a-zA-Z_][a-zA-Z0-9_]*)', line)
+        if func_match:
+            defined_names.add(func_match.group(1))
+    
+    unused_imports = imported_modules - defined_names - {"os", "sys", "json", "re", "math", "logging", "typing", "List", "Dict", "Optional", "Any", "Union"}
+    for unused in list(unused_imports)[:3]:
+        issues.append(
+            build_issue(
+                thresholds,
+                "unused",
+                "Potentially unused import",
+                f"Module '{unused}' may not be used in this file.",
+                42,
+                "Remove unused imports to reduce clutter.",
+                code_snippet=unused,
+            )
+        )
+
+    for idx, line in enumerate(lines, start=1):
+        if re.search(r'try:\s*(?:#[^\n]*)?\s*except\s*:', line) or re.search(r'try\s*{\s*}', line):
+            issues.append(
+                build_issue(
+                    thresholds,
+                    "error-handling",
+                    "Empty try-except block",
+                    f"Empty try-except on line {idx} swallows exceptions silently.",
+                    67,
+                    "Add exception handling or remove the block.",
+                    idx,
+                    line.strip()[:80],
+                )
+            )
+
+        if re.search(r'except\s*:', line) and 'except' in line:
+            issues.append(
+                build_issue(
+                    thresholds,
+                    "error-handling",
+                    "Bare except clause",
+                    f"Line {idx} catches all exceptions, hiding bugs.",
+                    72,
+                    "Catch specific exceptions instead.",
+                    idx,
+                    line.strip()[:80],
+                )
+            )
+
+    if language.lower() == "python":
+        func_bodies = {}
+        in_func = False
+        func_name = ""
+        func_start = 0
+        
+        for idx, line in enumerate(lines, start=1):
+            def_match = re.search(r'^\s*def\s+([a-zA-Z_][a-zA-Z0-9_]*)\(', line)
+            if def_match:
+                in_func = True
+                func_name = def_match.group(1)
+                func_start = idx
+                continue
+            
+            if in_func and line.strip() and not line.strip().startswith('#'):
+                if line[0] not in ' \t' or (idx - func_start > 3 and not line.strip()):
+                    if idx - func_start > 3:
+                        if not any(re.match(r'^\s+(""".*?""\'|\'\'\'.*?\'\'\')', l) for l in lines[func_start:idx] if l.strip()):
+                            issues.append(
+                                build_issue(
+                                    thresholds,
+                                    "documentation",
+                                    "Missing docstring",
+                                    f"Function '{func_name}' on line {func_start} has no docstring.",
+                                    35,
+                                    "Add a docstring explaining the function's purpose.",
+                                    func_start,
+                                    line.strip()[:80] if line.strip() else None,
+                                )
+                            )
+                        in_func = False
+
+    tab_lines = []
+    space_indent = None
+    for idx, line in enumerate(lines, start=1):
+        if line.startswith('\t') and space_indent is False:
+            tab_lines.append(idx)
+        elif line.startswith(' ') and not line.startswith('\t'):
+            space_indent = True
+        elif line.startswith('\t'):
+            space_indent = False
+    
+    if tab_lines:
+        issues.append(
+            build_issue(
+                thresholds,
+                "style",
+                "Inconsistent indentation",
+                f"File mixes tabs and spaces. Found tabs on lines: {', '.join(map(str, tab_lines[:5]))}.",
+                44,
+                "Use consistent indentation (spaces recommended).",
+                code_snippet=f"Mix at lines: {', '.join(map(str, tab_lines[:3]))}",
+            )
+        )
+
     return issues[:25]
 
 
