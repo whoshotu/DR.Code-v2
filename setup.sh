@@ -7,29 +7,19 @@ echo "  DR.CODE v2 - Easy Setup"
 echo "======================================"
 echo ""
 
-# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Check Docker
 if ! command -v docker &> /dev/null; then
     echo -e "${RED}Error: Docker is not installed${NC}"
     echo "Install Docker: https://docs.docker.com/get-docker/"
     exit 1
 fi
 
-if ! command -v docker-compose &> /dev/null && ! command -v docker &> /dev/null; then
-    echo -e "${RED}Error: Docker Compose is not installed${NC}"
-    exit 1
-fi
-
 echo -e "${GREEN}Docker found!${NC}"
 echo ""
 
-# Check for MongoDB Atlas
 echo "======================================"
 echo "  Step 1: MongoDB Setup"
 echo "======================================"
@@ -66,7 +56,6 @@ fi
 
 echo ""
 
-# Check for Ollama
 echo "======================================"
 echo "  Step 2: AI Model Setup"
 echo "======================================"
@@ -77,22 +66,21 @@ echo "  2. LM Studio (local)"
 echo "  3. OpenAI (cloud, requires API key)"
 echo "  4. Skip for now"
 echo ""
-read -p "Choose (1/2/3/4
+read -p "Choose (1/2/3/4): " model_choice
 
-if [ "$): " model_choicemodel_choice" = "1" ]; then
+if [ "$model_choice" = "1" ]; then
     echo ""
- Ollama..."
-       echo "Installing if command -v ollama &> /dev/null; then
-        echo " installed"
-Ollama already curl -fsSL    else
-        https://ollama.com/install.sh | sh
+    if command -v ollama &> /dev/null; then
+        echo "Ollama already installed"
+    else
+        echo "Installing Ollama..."
+        curl -fsSL https://ollama.com/install.sh | sh
     fi
     echo ""
     read -p "Enter Ollama model (default: codellama): " OLLAMA_MODEL
     OLLAMA_MODEL=${OLLAMA_MODEL:-codellama}
     OLLAMA_BASE_URL="http://host.docker.internal:11434"
     
-    # Pull model
     echo "Pulling $OLLAMA_MODEL model..."
     ollama pull $OLLAMA_MODEL 2>/dev/null || echo "Model pull failed, will use available models"
     
@@ -107,9 +95,8 @@ elif [ "$model_choice" = "3" ]; then
     read -p "Enter OpenAI API key: " OPENAI_API_KEY
     OLLAMA_BASE_URL="https://api.openai.com/v1"
     OLLAMA_MODEL="gpt-4"
-    
-    # Create .env.local for secrets
     echo "OPENAI_API_KEY=$OPENAI_API_KEY" > .env.local
+    
 elif [ "$model_choice" = "4" ]; then
     OLLAMA_BASE_URL="http://host.docker.internal:11434"
     OLLAMA_MODEL="codellama"
@@ -120,7 +107,6 @@ fi
 
 echo ""
 
-# GitHub Integration (optional)
 echo "======================================"
 echo "  Step 3: GitHub Integration (Optional)"
 echo "======================================"
@@ -141,7 +127,6 @@ fi
 
 echo ""
 
-# Create .env file
 echo "======================================"
 echo "  Creating Configuration..."
 echo "======================================"
@@ -165,21 +150,11 @@ fi
 
 echo -e "${GREEN}Configuration saved to .env${NC}"
 
-# Extra hosts for Docker
-if ! grep -q "extra_hosts" docker-compose.yml 2>/dev/null; then
-    echo "Adding Docker network configuration..."
-fi
-
 echo ""
 echo "======================================"
 echo "  Starting DR.CODE v2"
 echo "======================================"
 echo ""
-
-# Add extra_hosts if not present
-if ! grep -q "host.docker.internal" docker-compose.yml; then
-    echo "Note: You may need to add 'extra_hosts: - host.docker.internal:host-gateway' to docker-compose.yml"
-fi
 
 echo -e "${GREEN}Starting containers...${NC}"
 docker-compose up -d
