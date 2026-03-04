@@ -13,7 +13,6 @@ def test_sanitize_python_valid():
 def test_sanitize_python_invalid():
     bad = "def add(a,b) return a+b"
     salvaged = sanitize_python_output(bad)
-    # Should not crash; return a string (could be empty if no salvage)
     assert isinstance(salvaged, str)
 
 
