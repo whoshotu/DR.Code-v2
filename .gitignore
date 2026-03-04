@@ -88,3 +88,7 @@ android-sdk/ -e
 
 # AI Agent Instructions
 AGENTS.md
+
+# Session files
+session-*.md
+lastsession.md
