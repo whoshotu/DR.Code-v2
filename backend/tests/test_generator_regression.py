@@ -1,5 +1,10 @@
 import pytest
+import sys
+from pathlib import Path
 from unittest.mock import patch, MagicMock
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from generators.test_generator import (
     extract_python_functions,
     extract_js_functions,
