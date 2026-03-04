@@ -217,6 +217,32 @@ class GenerateTestsResponse(BaseModel):
     coverage_notes: str
 
 
+class GenerateDocstringsRequest(BaseModel):
+    code: str
+    language: str = "python"
+    style: str = "google"
+
+
+class GenerateDocstringsResponse(BaseModel):
+    success: bool
+    error: str = ""
+    documented_code: str
+    functions_documented: List[str]
+
+
+class GenerateDiagramRequest(BaseModel):
+    code: str
+    language: str = "python"
+    diagram_type: str = "sequence"
+
+
+class GenerateDiagramResponse(BaseModel):
+    success: bool
+    error: str = ""
+    diagram_syntax: str
+    diagram_type: str
+
+
 class RepositoryFile(BaseModel):
     path: str
     content: str
@@ -1583,6 +1609,30 @@ async def generate_tests_endpoint(payload: GenerateTestsRequest):
         include_edge_cases=payload.include_edge_cases,
     )
     return GenerateTestsResponse(**result)
+
+
+@api_router.post("/generate/docstrings", response_model=GenerateDocstringsResponse)
+async def generate_docstrings_endpoint(payload: GenerateDocstringsRequest):
+    from generators.docstring_generator import generate_docstrings
+
+    result = generate_docstrings(
+        code=payload.code,
+        language=payload.language,
+        style=payload.style,
+    )
+    return GenerateDocstringsResponse(**result)
+
+
+@api_router.post("/generate/diagram", response_model=GenerateDiagramResponse)
+async def generate_diagram_endpoint(payload: GenerateDiagramRequest):
+    from generators.diagram_generator import generate_diagram
+
+    result = generate_diagram(
+        code=payload.code,
+        language=payload.language,
+        diagram_type=payload.diagram_type,
+    )
+    return GenerateDiagramResponse(**result)
 
 
 @api_router.get("/reports", response_model=List[ReportSummary])

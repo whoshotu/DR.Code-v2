@@ -10,6 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/services/api";
 import GenerateTestsPanel from "@/components/GenerateTestsPanel";
+import GenerateDocstringsPanel from "@/components/GenerateDocstringsPanel";
+import GenerateDiagramPanel from "@/components/GenerateDiagramPanel";
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -64,9 +66,11 @@ export default function DashboardPage() {
       </div>
 
       <Tabs defaultValue="analyze" className="w-full" data-testid="dashboard-tabs">
-        <TabsList className="grid w-full grid-cols-2" data-testid="dashboard-tabs-list">
-          <TabsTrigger value="analyze" data-testid="tab-analyze">Analyze Code</TabsTrigger>
-          <TabsTrigger value="generate" data-testid="tab-generate">Generate Tests</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-4" data-testid="dashboard-tabs-list">
+          <TabsTrigger value="analyze" data-testid="tab-analyze">Analyze</TabsTrigger>
+          <TabsTrigger value="tests" data-testid="tab-tests">Tests</TabsTrigger>
+          <TabsTrigger value="docstrings" data-testid="tab-docstrings">Docs</TabsTrigger>
+          <TabsTrigger value="diagram" data-testid="tab-diagram">Diagram</TabsTrigger>
         </TabsList>
 
         <TabsContent value="analyze" data-testid="tab-content-analyze">
@@ -154,8 +158,16 @@ export default function DashboardPage() {
       </div>
         </TabsContent>
 
-        <TabsContent value="generate" data-testid="tab-content-generate">
+        <TabsContent value="tests" data-testid="tab-content-tests">
           <GenerateTestsPanel initialCode={code} initialLanguage={language} />
+        </TabsContent>
+
+        <TabsContent value="docstrings" data-testid="tab-content-docstrings">
+          <GenerateDocstringsPanel initialCode={code} initialLanguage={language} />
+        </TabsContent>
+
+        <TabsContent value="diagram" data-testid="tab-content-diagram">
+          <GenerateDiagramPanel initialCode={code} initialLanguage={language} />
         </TabsContent>
       </Tabs>
     </section>

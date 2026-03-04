@@ -92,4 +92,14 @@ export const api = {
     const { data } = await client.post("/generate/tests", payload);
     return data;
   },
+
+  generateDocstrings: async (payload) => {
+    const { data } = await client.post("/generate/docstrings", payload);
+    return data;
+  },
+
+  generateDiagram: async (payload) => {
+    const { data } = await client.post("/generate/diagram", payload);
+    return data;
+  },
 };
