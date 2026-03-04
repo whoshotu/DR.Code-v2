@@ -1,10 +1,17 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Copy, Check, GitBranch, Loader2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/services/api";
+import mermaid from "mermaid";
+
+mermaid.initialize({
+  startOnLoad: false,
+  theme: "dark",
+  securityLevel: "loose",
+});
 
 export default function GenerateDiagramPanel({ initialCode = "", initialLanguage = "python" }) {
   const [code, setCode] = useState(initialCode);
@@ -13,6 +20,26 @@ export default function GenerateDiagramPanel({ initialCode = "", initialLanguage
   const [loading, setLoading] = useState(false);
   const [diagramSyntax, setDiagramSyntax] = useState("");
   const [copied, setCopied] = useState(false);
+  const [showSyntax, setShowSyntax] = useState(false);
+  const diagramRef = useRef(null);
+  const [diagramId] = useState(() => `mermaid-${Math.random().toString(36).substr(2, 9)}`);
+
+  useEffect(() => {
+    if (diagramSyntax && diagramRef.current) {
+      mermaid.render(diagramId, diagramSyntax)
+        .then(({ svg }) => {
+          if (diagramRef.current) {
+            diagramRef.current.innerHTML = svg;
+          }
+        })
+        .catch((err) => {
+          console.error("Mermaid render error:", err);
+          if (diagramRef.current) {
+            diagramRef.current.innerHTML = `<p class="text-red-500 text-sm">Failed to render diagram: ${err.message}</p>`;
+          }
+        });
+    }
+  }, [diagramSyntax, diagramId]);
 
   const generateDiagram = async () => {
     if (!code.trim()) {
@@ -116,22 +143,41 @@ export default function GenerateDiagramPanel({ initialCode = "", initialLanguage
               <p className="text-sm text-muted-foreground" data-testid="diagram-results-info">
                 Mermaid {diagramType} diagram
               </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={copyToClipboard}
-                data-testid="copy-diagram-button"
-              >
-                {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                <span className="ml-2">{copied ? "Copied" : "Copy"}</span>
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowSyntax(!showSyntax)}
+                  data-testid="toggle-syntax-button"
+                >
+                  {showSyntax ? "Hide Syntax" : "Show Syntax"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={copyToClipboard}
+                  data-testid="copy-diagram-button"
+                >
+                  {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  <span className="ml-2">{copied ? "Copied" : "Copy"}</span>
+                </Button>
+              </div>
             </div>
-            <Textarea
-              data-testid="generated-diagram-syntax"
-              value={diagramSyntax}
-              readOnly
-              className="min-h-[150px] font-mono text-sm bg-muted/50"
+            
+            <div 
+              ref={diagramRef}
+              className="min-h-[200px] rounded-md border border-border bg-background p-4 flex items-center justify-center overflow-auto"
+              data-testid="diagram-rendered"
             />
+
+            {showSyntax && (
+              <Textarea
+                data-testid="generated-diagram-syntax"
+                value={diagramSyntax}
+                readOnly
+                className="min-h-[150px] font-mono text-sm bg-muted/50"
+              />
+            )}
           </div>
         )}
       </CardContent>
