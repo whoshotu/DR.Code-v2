@@ -1,7 +1,7 @@
 # DR.CODE-v2
 
 AI-powered code quality analysis with automated fix suggestions and GitHub PR integration.
-
+[![Test](https://github.com/whoshotu/DR.Code-v2/actions/workflows/test.yml/badge.svg)](https://github.com/whoshotu/DR.Code-v2/actions/workflows/test.yml)
 ## Choose Your Setup Type
 
 | # | Setup Type | Description |
