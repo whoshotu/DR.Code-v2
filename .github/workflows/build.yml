@@ -20,8 +20,8 @@ jobs:
       - name: Build Backend Docker Image
         uses: docker/build-push-action@v5
         with:
-          context: ./backend
-          file: Dockerfile
+          context: ${{ github.workspace }}
+          file: ${{ github.workspace }}/backend/Dockerfile
           push: false
           tags: drcode-backend:latest
           load: true
@@ -41,8 +41,8 @@ jobs:
       - name: Build Frontend Docker Image
         uses: docker/build-push-action@v5
         with:
-          context: ./frontend
-          file: Dockerfile
+          context: ${{ github.workspace }}
+          file: ${{ github.workspace }}/frontend/Dockerfile
           push: false
           tags: drcode-frontend:latest
           load: true
