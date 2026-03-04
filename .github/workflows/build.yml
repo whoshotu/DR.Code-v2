@@ -21,7 +21,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          dockerfile: backend/Dockerfile
+          dockerfile: ./backend/Dockerfile
           push: false
           tags: drcode-backend:latest
           load: true
@@ -43,7 +43,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          dockerfile: frontend/Dockerfile
+          dockerfile: ./frontend/Dockerfile
           push: false
           tags: drcode-frontend:latest
           load: true
