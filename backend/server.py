@@ -201,6 +201,22 @@ SUPPORTED_REPO_EXTENSIONS = {
 }
 
 
+class GenerateTestsRequest(BaseModel):
+    code: str
+    language: str = "python"
+    framework: str = "pytest"
+    include_edge_cases: bool = True
+
+
+class GenerateTestsResponse(BaseModel):
+    success: bool
+    error: str = ""
+    test_code: str
+    test_count: int
+    functions_tested: List[str]
+    coverage_notes: str
+
+
 class RepositoryFile(BaseModel):
     path: str
     content: str
@@ -1554,6 +1570,19 @@ async def analyze_code(
         },
     )
     return report
+
+
+@api_router.post("/generate/tests", response_model=GenerateTestsResponse)
+async def generate_tests_endpoint(payload: GenerateTestsRequest):
+    from generators.test_generator import generate_tests
+
+    result = generate_tests(
+        code=payload.code,
+        language=payload.language,
+        framework=payload.framework,
+        include_edge_cases=payload.include_edge_cases,
+    )
+    return GenerateTestsResponse(**result)
 
 
 @api_router.get("/reports", response_model=List[ReportSummary])
