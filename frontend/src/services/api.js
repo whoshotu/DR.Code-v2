@@ -87,4 +87,9 @@ export const api = {
     const { data } = await client.get("/integrations/github/status");
     return data;
   },
+
+  generateTests: async (payload) => {
+    const { data } = await client.post("/generate/tests", payload);
+    return data;
+  },
 };

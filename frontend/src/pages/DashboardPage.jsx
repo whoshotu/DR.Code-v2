@@ -7,7 +7,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/services/api";
+import GenerateTestsPanel from "@/components/GenerateTestsPanel";
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -61,8 +63,15 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
-        <Card className="xl:col-span-7" data-testid="code-input-card">
+      <Tabs defaultValue="analyze" className="w-full" data-testid="dashboard-tabs">
+        <TabsList className="grid w-full grid-cols-2" data-testid="dashboard-tabs-list">
+          <TabsTrigger value="analyze" data-testid="tab-analyze">Analyze Code</TabsTrigger>
+          <TabsTrigger value="generate" data-testid="tab-generate">Generate Tests</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="analyze" data-testid="tab-content-analyze">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+            <Card className="xl:col-span-7" data-testid="code-input-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-xl" data-testid="code-input-title">
               <Sparkles className="h-5 w-5 text-primary" /> Analyze Source Code
@@ -143,6 +152,12 @@ export default function DashboardPage() {
           </Card>
         </div>
       </div>
+        </TabsContent>
+
+        <TabsContent value="generate" data-testid="tab-content-generate">
+          <GenerateTestsPanel initialCode={code} initialLanguage={language} />
+        </TabsContent>
+      </Tabs>
     </section>
   );
 }
