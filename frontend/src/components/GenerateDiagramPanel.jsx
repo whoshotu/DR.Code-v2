@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import usePersistedState from "../hooks/usePersistedState";
 import { Copy, Check, GitBranch, Loader2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ mermaid.initialize({
 });
 
 export default function GenerateDiagramPanel({ initialCode = "", initialLanguage = "python", sanitizerEnabled = true }) {
-  const [code, setCode] = useState(initialCode);
+  const [code, setCode] = usePersistedState("drcode_generate_diagram_code", initialCode);
   const [language, setLanguage] = useState(initialLanguage);
   const [diagramType, setDiagramType] = useState("sequence");
   const [loading, setLoading] = useState(false);

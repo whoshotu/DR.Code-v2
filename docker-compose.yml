@@ -7,19 +7,30 @@ services:
       dockerfile: backend/Dockerfile
     ports:
       - "8002:8002"
-    environment:
-      MONGO_URL: ${MONGO_URL}
-      DB_NAME: drcode
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-codellama}
-      CORS_ORIGINS: http://localhost:3001
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+    env_file:
+      - .env.docker
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mongo:
+    image: mongo:7
+    container_name: drcode-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.stats()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -34,4 +45,8 @@ services:
       REACT_APP_BACKEND_URL: http://localhost:8002
     depends_on:
       - backend
+      - mongo
     restart: unless-stopped
+
+volumes:
+  mongo-data:

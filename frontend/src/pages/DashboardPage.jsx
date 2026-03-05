@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
+import usePersistedState from "../hooks/usePersistedState";
 import { useNavigate } from "react-router-dom";
 import { Sparkles, Upload, WandSparkles } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
@@ -17,9 +18,11 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const [filename, setFilename] = useState("sample.py");
   const [language, setLanguage] = useState("python");
-  const [code, setCode] = useState("");
+  const [sanitizerEnabled, setSanitizerEnabled] = usePersistedState("drcode_sanitizer", true);
+  const [code, setCode] = usePersistedState("drcode_dashboard_code", "");
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState(null);
+  const [ollamaHealth, setOllamaHealth] = useState(null);
 
   const counts = useMemo(() => {
     if (!report) return { critical: 0, high: 0, total: 0 };
@@ -30,7 +33,6 @@ export default function DashboardPage() {
     };
   }, [report]);
 
-  const [sanitizerEnabled, setSanitizerEnabled] = useState(true);
 
   const onUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -58,6 +60,16 @@ export default function DashboardPage() {
     }
   };
 
+  // Health check for Ollama readiness (via backend health endpoint)
+  useEffect(() => {
+    try {
+      const base = (process.env.REACT_APP_BACKEND_URL || "http://localhost:8002");
+      fetch(`${base}/health`).then(res => res.json()).then(h => setOllamaHealth(h?.ollama_ready ?? null)).catch(() => setOllamaHealth(null));
+    } catch {
+      setOllamaHealth(null);
+    }
+  }, []);
+
   return (
     <section className="space-y-6" data-testid="dashboard-page">
       <div className="rounded-xl border border-border bg-card/70 p-6 backdrop-blur-xl" data-testid="dashboard-header-card">
@@ -65,14 +77,20 @@ export default function DashboardPage() {
         <p className="mt-2 text-base text-muted-foreground" data-testid="dashboard-description">
           Detect slop, get repair snippets, and generate maintainable docs in one pass.
         </p>
-      </div>
+      </div>{/* Sanitizer + status area */}
+      {ollamaHealth !== null && (
+        <span style={{ display: 'inline-block', marginLeft: 8, padding: '4px 8px', borderRadius: 999, background: ollamaHealth ? '#10b981' : '#374151', color: 'white', fontSize: 12 }}>
+          Ollama: {ollamaHealth ? 'Ready' : 'Not Ready'}
+        </span>
+      )}
 
+      
       <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 1rem' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }} data-testid="sanitizer-toggle">
           <input type="checkbox" checked={sanitizerEnabled} onChange={(e) => setSanitizerEnabled(e.target.checked)} /> Sanitizer
         </label>
       </div>
-      <Tabs defaultValue="analyze" className="w-full" data-testid="dashboard-tabs">
+      <Tabs defaultValue={"analyze"} className="w-full" data-testid="dashboard-tabs">
         <TabsList className="grid w-full grid-cols-4" data-testid="dashboard-tabs-list">
           <TabsTrigger value="analyze" data-testid="tab-analyze">Analyze</TabsTrigger>
           <TabsTrigger value="tests" data-testid="tab-tests">Tests</TabsTrigger>

@@ -19,6 +19,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
+      - name: Prepare Docker Env
+        run: |
+          echo "MONGO_URL=${{ secrets.MONGO_URL }}" > .env.docker
+          echo "OLLAMA_BASE_URL=${{ secrets.OLLAMA_BASE_URL }}" >> .env.docker
+          echo "OLLAMA_MODEL=${{ secrets.OLLAMA_MODEL }}" >> .env.docker
+          echo "DB_NAME=drcode" >> .env.docker
       - name: Build Backend Docker Image
         uses: docker/build-push-action@v5
         with:

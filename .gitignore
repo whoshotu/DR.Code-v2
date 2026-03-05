@@ -92,3 +92,4 @@ AGENTS.md
 # Session files
 session-*.md
 lastsession.md
+env.docker

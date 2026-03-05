@@ -1153,12 +1153,12 @@ def call_llm_sync(
             continue
         try:
             raw_response: Optional[str] = None
-        if provider_name == "ollama":
-            raw_response = call_provider_ollama(prompt, config)
-        elif provider_name == "local" and call_provider_local is not None:
-            # Local provider - uses a local model server
-            local_conf = providers.get("local", {})
-            raw_response = call_provider_local(prompt, local_conf)
+            if provider_name == "ollama":
+                raw_response = call_provider_ollama(prompt, config)
+            elif provider_name == "local" and call_provider_local is not None:
+                # Local provider - uses a local model server
+                local_conf = providers.get("local", {})
+                raw_response = call_provider_local(prompt, local_conf)
             elif provider_name == "openai_compatible":
                 api_key = decrypt_value(config.get("api_key_encrypted"))
                 if api_key:
@@ -1607,13 +1607,13 @@ async def analyze_code(
 
 @api_router.post("/generate/tests", response_model=GenerateTestsResponse)
 async def generate_tests_endpoint(payload: GenerateTestsRequest):
-from generators.test_generator import generate_tests
-try:
-    from local_provider import call_provider_local
-except Exception:
-    call_provider_local = None
+    from generators.test_generator import generate_tests
+    try:
+        from local_provider import call_provider_local
+    except Exception:
+        call_provider_local = None
 
-    sanitizer_flag = getattr(payload, "sanitizer", True) if hasattr(payload, "sanitizer") else True
+    sanitizer_flag = getattr(payload, "sanitizer", True)
     result = generate_tests(
         code=payload.code,
         language=payload.language,
@@ -2455,3 +2455,14 @@ logger = logging.getLogger(__name__)
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+@api_router.get("/health", response_model=dict)
+async def health_status():
+    import os
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    configured = bool(base_url)
+    ready = False
+    try:
+        ready = await check_ollama_ready(base_url)
+    except Exception:
+        ready = False
+    return {"status": "ok", "ollama_configured": configured, "ollama_ready": ready}
