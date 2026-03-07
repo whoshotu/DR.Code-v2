@@ -180,6 +180,14 @@ EOF
 start_services() {
     echo ""
     echo -e "${CYAN}Starting services...${NC}"
+    
+    # Create .env.docker from sample if it doesn't exist
+    if [ ! -f .env.docker ]; then
+        if [ -f .env.docker.sample ]; then
+            cp .env.docker.sample .env.docker
+        fi
+    fi
+    
     docker-compose up -d
     echo ""
     echo -e "${GREEN}======================================"
