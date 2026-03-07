@@ -54,20 +54,28 @@ The setup script will guide you through:
 
 ```bash
 # 1. Clone the repo
-git clone <repo-url>
+git clone https://github.com/whoshotu/DR.Code-v2.git
 cd DR.CODE-v2
 
-# 2. Backend setup
+# 2. Backend setup (using venv to avoid system Python issues)
 cd backend
-cp .env.example .env  # Edit with your values
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env  # Edit with your values
 uvicorn server:app --port 8002 --reload
 
 # 3. Frontend setup (new terminal)
 cd ../frontend
 cp .env.example .env  # Set REACT_APP_BACKEND_URL=http://localhost:8002
-npm install
+npm install --legacy-peer-deps
 PORT=3001 npm start
+```
+
+Or use the Makefile:
+```bash
+make install  # Install all dependencies
+make dev      # Start dev servers
 ```
 
 Visit: http://localhost:3001
