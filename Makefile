@@ -31,6 +31,7 @@ dev:
 	@cd frontend && PORT=3001 npm start
 
 docker-up:
+	@if [ ! -f .env.docker ] && [ -f .env.docker.sample ]; then cp .env.docker.sample .env.docker; fi
 	docker-compose up -d
 	@echo "Services started. Frontend: http://localhost:3001"
 
