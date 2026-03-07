@@ -2,137 +2,157 @@
 
 set -e
 
-echo "======================================"
-echo "  DR.CODE v2 - Easy Setup"
-echo "======================================"
-echo ""
-
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
-if ! command -v docker &> /dev/null; then
-    echo -e "${RED}Error: Docker is not installed${NC}"
-    echo "Install Docker: https://docs.docker.com/get-docker/"
-    exit 1
-fi
-
-echo -e "${GREEN}Docker found!${NC}"
+echo -e "${CYAN}======================================"
+echo "  DR.CODE v2 - Quick Setup"
+echo -e "======================================${NC}"
 echo ""
 
-echo "======================================"
-echo "  Step 1: MongoDB Setup"
-echo "======================================"
-echo ""
-echo "You need a MongoDB database. Options:"
-echo "  1. MongoDB Atlas (free cloud) - RECOMMENDED"
-echo "  2. Local MongoDB via Docker"
-echo ""
-read -p "Choose (1/2): " mongo_choice
-
-if [ "$mongo_choice" = "1" ]; then
-    echo ""
-    echo "Get free MongoDB Atlas:"
-    echo "  1. Go to https://www.mongodb.com/cloud/atlas"
-    echo "  2. Create free account"
-    echo "  3. Create free cluster"
-    echo "  4. Connect > Connect your application > Python"
-    echo "  5. Copy the connection string"
-    echo ""
-    read -p "Paste your MongoDB connection string: " MONGO_URL
-    
-    if [ -z "$MONGO_URL" ]; then
-        echo -e "${RED}Error: No connection string provided${NC}"
+check_docker() {
+    if ! command -v docker &> /dev/null; then
+        echo -e "${RED}Error: Docker is not installed${NC}"
+        echo "Install Docker: https://docs.docker.com/get-docker/"
         exit 1
     fi
-elif [ "$mongo_choice" = "2" ]; then
-    echo "Starting local MongoDB..."
-    docker run -d -p 27017:27017 --name mongodb mongo:latest
-    MONGO_URL="mongodb://localhost:27017/drcode"
-else
-    echo -e "${RED}Invalid choice${NC}"
-    exit 1
-fi
-
-echo ""
-
-echo "======================================"
-echo "  Step 2: AI Model Setup"
-echo "======================================"
-echo ""
-echo "Choose your AI model provider:"
-echo "  1. Ollama (local, free) - RECOMMENDED"
-echo "  2. LM Studio (local)"
-echo "  3. OpenAI (cloud, requires API key)"
-echo "  4. Skip for now"
-echo ""
-read -p "Choose (1/2/3/4): " model_choice
-
-if [ "$model_choice" = "1" ]; then
-    echo ""
-    if command -v ollama &> /dev/null; then
-        echo "Ollama already installed"
-    else
-        echo "Installing Ollama..."
-        curl -fsSL https://ollama.com/install.sh | sh
+    if ! docker info &> /dev/null; then
+        echo -e "${RED}Error: Docker is not running${NC}"
+        echo "Start Docker and try again"
+        exit 1
     fi
+    echo -e "${GREEN}✓ Docker ready${NC}"
+}
+
+check_ollama() {
+    if command -v ollama &> /dev/null; then
+        if ollama list &> /dev/null; then
+            echo -e "${GREEN}✓ Ollama installed${NC}"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+start_ollama() {
+    if ! check_ollama; then
+        echo -e "${YELLOW}Installing Ollama...${NC}"
+        curl -fsSL https://ollama.com/install.sh | sh
+        check_ollama
+    fi
+}
+
+check_mongo() {
+    if [ -n "$MONGO_URL" ]; then
+        return 0
+    fi
+    
+    if [ -f .env ] && grep -q "MONGO_URL=" .env; then
+        source .env
+        return 0
+    fi
+    
+    return 1
+}
+
+setup_mongo() {
     echo ""
-    read -p "Enter Ollama model (default: codellama): " OLLAMA_MODEL
-    OLLAMA_MODEL=${OLLAMA_MODEL:-codellama}
-    OLLAMA_BASE_URL="http://host.docker.internal:11434"
-    
-    echo "Pulling $OLLAMA_MODEL model..."
-    ollama pull $OLLAMA_MODEL 2>/dev/null || echo "Model pull failed, will use available models"
-    
-elif [ "$model_choice" = "2" ]; then
-    echo "LM Studio detected at http://localhost:1234/v1"
-    OLLAMA_BASE_URL="http://host.docker.internal:1234/v1"
-    read -p "Enter model name (default: codellama): " OLLAMA_MODEL
-    OLLAMA_MODEL=${OLLAMA_MODEL:-codellama}
-    
-elif [ "$model_choice" = "3" ]; then
+    echo -e "${CYAN}Step 1: MongoDB${NC}"
+    echo "  1) Use MongoDB Atlas (free cloud)"
+    echo "  2) Use local MongoDB via Docker (default)"
+    echo "  3) Skip (enter custom MONGO_URL)"
     echo ""
-    read -p "Enter OpenAI API key: " OPENAI_API_KEY
-    OLLAMA_BASE_URL="https://api.openai.com/v1"
-    OLLAMA_MODEL="gpt-4"
-    echo "OPENAI_API_KEY=$OPENAI_API_KEY" > .env.local
+    read -p "Choose [2]: " mongo_choice
+    mongo_choice=${mongo_choice:-2}
     
-elif [ "$model_choice" = "4" ]; then
-    OLLAMA_BASE_URL="http://host.docker.internal:11434"
-    OLLAMA_MODEL="codellama"
-else
-    echo -e "${RED}Invalid choice${NC}"
-    exit 1
-fi
+    if [ "$mongo_choice" = "1" ]; then
+        echo ""
+        echo "Get free MongoDB Atlas:"
+        echo "  1. Go to https://www.mongodb.com/cloud/atlas"
+        echo "  2. Create free account & cluster"
+        echo "  3. Connect > Connect your application"
+        echo "  4. Copy the connection string"
+        echo ""
+        read -p "Paste MONGO_URL: " MONGO_URL
+    elif [ "$mongo_choice" = "2" ]; then
+        echo "Starting local MongoDB..."
+        docker run -d -p 27017:27017 --name drcode-mongo mongo:7
+        MONGO_URL="mongodb://localhost:27017/drcode"
+    elif [ "$mongo_choice" = "3" ]; then
+        read -p "Enter MONGO_URL: " MONGO_URL
+    fi
+    
+    if [ -z "$MONGO_URL" ]; then
+        echo -e "${RED}Error: MONGO_URL is required${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}✓ MongoDB configured${NC}"
+}
 
-echo ""
-
-echo "======================================"
-echo "  Step 3: GitHub Integration (Optional)"
-echo "======================================"
-echo ""
-read -p "Add GitHub token for PR reviews? (y/n): " github_choice
-
-GITHUB_TOKEN=""
-GITHUB_WEBHOOK_SECRET=""
-
-if [ "$github_choice" = "y" ]; then
+setup_ai() {
     echo ""
-    echo "Get token at: https://github.com/settings/tokens"
-    echo "  - Select 'repo' scope"
-    echo "  - Select 'pull_requests:write' scope"
-    read -p "Paste GitHub token: " GITHUB_TOKEN
-    read -p "Enter webhook secret (optional): " GITHUB_WEBHOOK_SECRET
-fi
+    echo -e "${CYAN}Step 2: AI Model${NC}"
+    echo "  1) Ollama (local, free) - RECOMMENDED"
+    echo "  2) LM Studio (local)"
+    echo "  3) OpenAI (cloud)"
+    echo "  4) Skip (configure later)"
+    echo ""
+    read -p "Choose [1]: " ai_choice
+    ai_choice=${ai_choice:-1}
+    
+    if [ "$ai_choice" = "1" ]; then
+        start_ollama
+        OLLAMA_BASE_URL="http://host.docker.internal:11434"
+        
+        echo ""
+        echo "Available models:"
+        ollama list | grep -v "^$" | head -6
+        
+        read -p "Enter model [codellama]: " OLLAMA_MODEL
+        OLLAMA_MODEL=${OLLAMA_MODEL:-codellama}
+        
+        if ! ollama list | grep -q "$OLLAMA_MODEL"; then
+            echo "Pulling $OLLAMA_MODEL..."
+            ollama pull "$OLLAMA_MODEL" || true
+        fi
+        
+    elif [ "$ai_choice" = "2" ]; then
+        OLLAMA_BASE_URL="http://host.docker.internal:1234/v1"
+        read -p "Enter model [codellama]: " OLLAMA_MODEL
+        OLLAMA_MODEL=${OLLAMA_MODEL:-codellama}
+        
+    elif [ "$ai_choice" = "3" ]; then
+        read -p "Enter OpenAI API key: " OPENAI_API_KEY
+        OLLAMA_BASE_URL="https://api.openai.com/v1"
+        OLLAMA_MODEL="gpt-4"
+        
+    elif [ "$ai_choice" = "4" ]; then
+        OLLAMA_BASE_URL="http://host.docker.internal:11434"
+        OLLAMA_MODEL="codellama"
+    fi
+    
+    echo -e "${GREEN}✓ AI configured: $OLLAMA_MODEL${NC}"
+}
 
-echo ""
+setup_github() {
+    echo ""
+    echo -e "${CYAN}Step 3: GitHub Integration (Optional)${NC}"
+    echo "Press Enter to skip, or paste token to enable PR reviews"
+    read -p "GitHub Token: " GITHUB_TOKEN
+    if [ -n "$GITHUB_TOKEN" ]; then
+        read -p "Webhook Secret (optional): " GITHUB_WEBHOOK_SECRET
+    fi
+}
 
-echo "======================================"
-echo "  Creating Configuration..."
-echo "======================================"
-echo ""
-
-cat > .env << EOF
+save_config() {
+    echo ""
+    echo -e "${CYAN}Saving configuration...${NC}"
+    
+    cat > .env << EOF
 MONGO_URL=$MONGO_URL
 OLLAMA_BASE_URL=$OLLAMA_BASE_URL
 OLLAMA_MODEL=$OLLAMA_MODEL
@@ -140,35 +160,69 @@ CORS_ORIGINS=http://localhost:3001
 DB_NAME=drcode
 EOF
 
-if [ -n "$GITHUB_TOKEN" ]; then
-    echo "GITHUB_TOKEN=$GITHUB_TOKEN" >> .env
+    if [ -n "$GITHUB_TOKEN" ]; then
+        echo "GITHUB_TOKEN=$GITHUB_TOKEN" >> .env
+    fi
+    if [ -n "$GITHUB_WEBHOOK_SECRET" ]; then
+        echo "GITHUB_WEBHOOK_SECRET=$GITHUB_WEBHOOK_SECRET" >> .env
+    fi
+    
+    echo -e "${GREEN}✓ Config saved to .env${NC}"
+}
+
+start_services() {
+    echo ""
+    echo -e "${CYAN}Starting services...${NC}"
+    docker-compose up -d
+    echo ""
+    echo -e "${GREEN}======================================"
+    echo "  DR.CODE v2 is Ready!"
+    echo -e "======================================${NC}"
+    echo ""
+    echo "  Frontend: http://localhost:3001"
+    echo "  Backend:  http://localhost:8002"
+    echo ""
+    echo "Commands:"
+    echo "  make docker-up    # Start services"
+    echo "  make docker-down # Stop services"
+    echo "  make logs        # View logs"
+    echo ""
+}
+
+quick_start() {
+    echo -e "${YELLOW}Running in Quick Start mode...${NC}"
+    
+    check_docker
+    
+    if ! check_mongo; then
+        setup_mongo
+    else
+        echo -e "${GREEN}✓ Using existing MONGO_URL${NC}"
+    fi
+    
+    setup_ai
+    save_config
+    start_services
+}
+
+interactive_setup() {
+    check_docker
+    setup_mongo
+    setup_ai
+    setup_github
+    save_config
+    start_services
+}
+
+echo "Choose mode:"
+echo "  1) Quick Start (recommended defaults)"
+echo "  2) Interactive Setup (customize everything)"
+echo ""
+read -p "Choose [1]: " mode
+mode=${mode:-1}
+
+if [ "$mode" = "1" ]; then
+    quick_start
+else
+    interactive_setup
 fi
-
-if [ -n "$GITHUB_WEBHOOK_SECRET" ]; then
-    echo "GITHUB_WEBHOOK_SECRET=$GITHUB_WEBHOOK_SECRET" >> .env
-fi
-
-echo -e "${GREEN}Configuration saved to .env${NC}"
-
-echo ""
-echo "======================================"
-echo "  Starting DR.CODE v2"
-echo "======================================"
-echo ""
-
-echo -e "${GREEN}Starting containers...${NC}"
-docker-compose up -d
-
-echo ""
-echo "======================================"
-echo "  Done!"
-echo "======================================"
-echo ""
-echo "Access at:"
-echo "  - Frontend: http://localhost:3001"
-echo "  - Backend:  http://localhost:8002"
-echo "  - API:      http://localhost:8002/api"
-echo ""
-echo "To view logs: docker-compose logs -f"
-echo "To stop:      docker-compose down"
-echo ""

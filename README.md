@@ -10,10 +10,11 @@ AI-powered code quality analysis with automated fix suggestions and GitHub PR in
 | [1](#1-easy-setup) | Easy Setup | One-command script (recommended) |
 | [2](#2-local-development) | Local Development | Run on your machine (Mac/Windows/Linux) |
 | [3](#3-docker-compose) | Docker Compose | All-in-one container setup |
-| [4](#4-cloud-deployment) | Cloud Deployment | Deploy to any container hosting service |
-| [5](#5-webhook-testing) | Webhook Testing | Test GitHub PR webhooks locally |
+| [4](#4-pre-built-docker-images) | Pre-built Images | Pull from GHCR (fastest) |
+| [5](#5-cloud-deployment) | Cloud Deployment | Deploy to any container hosting service |
+| [6](#6-webhook-testing) | Webhook Testing | Test GitHub PR webhooks locally |
 
-Jump to: [`#1`](#1-easy-setup) [`#2`](#2-local-development) [`#3`](#3-docker-compose) [`#4`](#4-cloud-deployment) [`#5`](#5-webhook-testing)
+Jump to: [`#1`](#1-easy-setup) [`#2`](#2-local-development) [`#3`](#3-docker-compose) [`#4`](#4-pre-built-docker-images) [`#5`](#5-cloud-deployment) [`#6`](#6-webhook-testing)
 
 ---
 
@@ -30,6 +31,16 @@ cd DR.Code-v2
 # 3. That's it! Access at:
 #    - Frontend: http://localhost:3001
 #    - Backend:  http://localhost:8002
+```
+
+Or use the Makefile for common commands:
+
+```bash
+make install    # Install dependencies
+make docker-up  # Start services
+make docker-down # Stop services
+make test       # Run tests
+make open       # Open frontend in browser
 ```
 
 The setup script will guide you through:
@@ -240,7 +251,42 @@ docker-compose up --build
 
 ---
 
-## 4. Cloud Deployment
+## 4. Pre-built Docker Images (Fastest)
+
+Use pre-built images from GitHub Container Registry:
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/whoshotu/dr.code-v2:latest
+
+# Run (requires MONGO_URL and OLLAMA)
+docker run -d \
+  -p 3001:80 \
+  -p 8002:8002 \
+  -e MONGO_URL=mongodb+srv://... \
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  ghcr.io/whoshotu/dr.code-v2:latest
+```
+
+Or with docker-compose:
+
+```yaml
+services:
+  app:
+    image: ghcr.io/whoshotu/dr.code-v2:latest
+    ports:
+      - "3001:80"
+      - "8002:8002"
+    environment:
+      - MONGO_URL=mongodb+srv://...
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
+
+---
+
+## 5. Cloud Deployment
 
 ### Universal Container Approach
 
@@ -296,7 +342,7 @@ doprax deploy --image drcode-backend
 
 ---
 
-## 5. Webhook Testing
+## 6. Webhook Testing
 
 ### Why Webhooks?
 
