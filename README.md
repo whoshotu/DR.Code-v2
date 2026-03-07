@@ -251,38 +251,22 @@ docker-compose up --build
 
 ---
 
-## 4. Pre-built Docker Images (Fastest)
+## 4. Pre-built Docker Images
 
 Use pre-built images from GitHub Container Registry:
 
 ```bash
-# Pull the latest image
-docker pull ghcr.io/whoshotu/dr-code-v2:latest
+# Pull backend and frontend
+docker pull ghcr.io/whoshotu/dr-code-v2-backend:latest
+docker pull ghcr.io/whoshotu/dr-code-v2-frontend:latest
 
-# Run (requires MONGO_URL and OLLAMA)
-docker run -d \
-  -p 3001:80 \
-  -p 8002:8002 \
-  -e MONGO_URL=mongodb+srv://... \
-  -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
-  ghcr.io/whoshotu/dr-code-v2:latest
+# Or use docker-compose:
+docker-compose up -d
 ```
 
-Or with docker-compose:
-
-```yaml
-services:
-  app:
-    image: ghcr.io/whoshotu/dr-code-v2:latest
-    ports:
-      - "3001:80"
-      - "8002:8002"
-    environment:
-      - MONGO_URL=mongodb+srv://...
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-```
+Images:
+- `ghcr.io/whoshotu/dr-code-v2-backend:latest`
+- `ghcr.io/whoshotu/dr-code-v2-frontend:latest`
 
 ---
 

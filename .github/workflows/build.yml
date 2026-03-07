@@ -53,14 +53,6 @@ jobs:
           no-cache: true
         env:
           REACT_APP_BACKEND_URL: ${{ secrets.REACT_APP_BACKEND_URL }}
-      
-      - name: Build and Push Combined Image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/whoshotu/dr-code-v2:latest
-          no-cache: true
 
   build-pr:
     name: Build PR (No Push)
@@ -109,6 +101,6 @@ jobs:
         run: |
           echo "✅ Build complete!"
           echo ""
-          echo "To run the pre-built images:"
-          echo "  docker pull ghcr.io/whoshotu/dr-code-v2:latest"
-          echo "  docker run -p 3001:80 -p 8002:8002 ghcr.io/whoshotu/dr-code-v2:latest"
+          echo "Pre-built images:"
+          echo "  ghcr.io/whoshotu/dr-code-v2-backend:latest"
+          echo "  ghcr.io/whoshotu/dr-code-v2-frontend:latest"
