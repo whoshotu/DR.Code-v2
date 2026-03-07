@@ -76,6 +76,7 @@ DEFAULT_MODELS = {
     "gemini": "gemini-2.5-pro",
     "anthropic": "claude-sonnet-4-6",
 }
+DEFAULT_MODELS.setdefault("local", DEFAULT_MODELS.get("ollama") or "llama3.2:latest")
 
 DEFAULT_BASE_URLS = {
     "ollama": "http://localhost:11434",
@@ -941,7 +942,6 @@ def build_default_settings_doc() -> Dict[str, Any]:
     providers["ollama"]["enabled"] = bool(
         os.environ.get("OLLAMA_BASE_URL") and os.environ.get("OLLAMA_MODEL")
     )
-
     # v2: GitHub integration block — token stored encrypted, same pattern as AI provider keys
     github_token_env = os.environ.get("GITHUB_TOKEN")
     github_webhook_secret_env = os.environ.get("GITHUB_WEBHOOK_SECRET")
@@ -2455,14 +2455,3 @@ logger = logging.getLogger(__name__)
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
-@api_router.get("/health", response_model=dict)
-async def health_status():
-    import os
-    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-    configured = bool(base_url)
-    ready = False
-    try:
-        ready = await check_ollama_ready(base_url)
-    except Exception:
-        ready = False
-    return {"status": "ok", "ollama_configured": configured, "ollama_ready": ready}

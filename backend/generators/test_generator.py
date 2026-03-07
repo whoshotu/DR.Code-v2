@@ -253,10 +253,22 @@ def generate_tests(
     prompt = build_test_prompt(code, language, framework, functions, include_edge_cases)
 
     test_code = call_llm_for_tests(prompt)
+    orig_test_code = test_code
     if sanitizer_enabled and test_code:
         test_code = sanitize_python_output(test_code)
-
+    # If sanitizer produced nothing, analyze the original to distinguish syntax errors from LLM failure
     if not test_code:
+        if orig_test_code:
+            valid, syntax_error = validate_python_syntax(orig_test_code)
+            if not valid:
+                return {
+                    "success": False,
+                    "error": f"Generated code has syntax errors: {syntax_error}",
+                    "test_code": orig_test_code,
+                    "test_count": 0,
+                    "functions_tested": [],
+                    "coverage_notes": "",
+                }
         return {
             "success": False,
             "error": "Failed to generate tests - LLM unavailable",
