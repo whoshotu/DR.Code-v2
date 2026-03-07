@@ -257,7 +257,7 @@ Use pre-built images from GitHub Container Registry:
 
 ```bash
 # Pull the latest image
-docker pull ghcr.io/whoshotu/dr.code-v2:latest
+docker pull ghcr.io/whoshotu/dr-code-v2:latest
 
 # Run (requires MONGO_URL and OLLAMA)
 docker run -d \
@@ -265,7 +265,7 @@ docker run -d \
   -p 8002:8002 \
   -e MONGO_URL=mongodb+srv://... \
   -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
-  ghcr.io/whoshotu/dr.code-v2:latest
+  ghcr.io/whoshotu/dr-code-v2:latest
 ```
 
 Or with docker-compose:
@@ -273,7 +273,7 @@ Or with docker-compose:
 ```yaml
 services:
   app:
-    image: ghcr.io/whoshotu/dr.code-v2:latest
+    image: ghcr.io/whoshotu/dr-code-v2:latest
     ports:
       - "3001:80"
       - "8002:8002"
