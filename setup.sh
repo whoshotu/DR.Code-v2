@@ -78,8 +78,15 @@ setup_mongo() {
         echo ""
         read -p "Paste MONGO_URL: " MONGO_URL
     elif [ "$mongo_choice" = "2" ]; then
-        echo "Starting local MongoDB..."
-        docker run -d -p 27017:27017 --name drcode-mongo mongo:7
+        if docker ps --format "{{.Names}}" | grep -q "drcode-mongo\|mongo"; then
+            echo "MongoDB already running, using existing container"
+        elif docker ps -a --format "{{.Names}}" | grep -q "drcode-mongo"; then
+            echo "Starting existing MongoDB container..."
+            docker start drcode-mongo
+        else
+            echo "Starting local MongoDB..."
+            docker run -d -p 27017:27017 --name drcode-mongo mongo:7
+        fi
         MONGO_URL="mongodb://localhost:27017/drcode"
     elif [ "$mongo_choice" = "3" ]; then
         read -p "Enter MONGO_URL: " MONGO_URL
