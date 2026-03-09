@@ -100,6 +100,10 @@ jobs:
         image: mongo:7
         ports:
           - 27017:27017
+      ollama:
+        image: ollama/ollama:latest
+        ports:
+          - 11434:11434
     
     steps:
       - name: Checkout code
@@ -124,15 +128,25 @@ jobs:
           echo "OLLAMA_MODEL=${{ secrets.OLLAMA_MODEL }}" >> $GITHUB_ENV
           echo "PYTHONPATH=${{ github.workspace }}/backend" >> $GITHUB_ENV
       
-      - name: Wait for Ollama
+      - name: Wait for services
         run: |
-          echo "Waiting for Ollama..."
+          echo "Waiting for MongoDB..."
           for i in {1..30}; do
+            if curl -s mongodb://localhost:27017 >/dev/null 2>&1; then
+              echo "MongoDB is ready!"
+              break
+            fi
+            echo "Waiting for MongoDB... ($i/30)"
+            sleep 2
+          done
+          
+          echo "Waiting for Ollama..."
+          for i in {1..60}; do
             if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
               echo "Ollama is ready!"
               break
             fi
-            echo "Waiting... ($i/30)"
+            echo "Waiting for Ollama... ($i/60)"
             sleep 2
           done
       
