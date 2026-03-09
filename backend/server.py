@@ -30,20 +30,17 @@ load_dotenv(ROOT_DIR / ".env")
 
 
 def discover_mongo_url() -> str:
-    """Auto-discover MongoDB: localhost → docker network → env var"""
+    """Auto-discover MongoDB: env var → docker network → localhost"""
     from motor.motor_asyncio import AsyncIOMotorClient
     
     _logger = logging.getLogger(__name__)
     db_name = os.environ.get("DB_NAME", "drcode")
     
-    # 1. Try localhost first (works in CI and local)
-    try:
-        client = AsyncIOMotorClient(f"mongodb://localhost:27017/{db_name}", serverSelectionTimeoutMS=2000)
-        client.server_info()
-        _logger.info("MongoDB auto-detected: mongodb://localhost:27017 (host/CI)")
-        return f"mongodb://localhost:27017/{db_name}"
-    except Exception:
-        pass
+    # 1. Use env var if explicitly provided
+    env_url = os.environ.get("MONGO_URL")
+    if env_url:
+        _logger.info(f"MongoDB from environment: {env_url}")
+        return env_url
     
     # 2. Try docker-compose network (if in compose network)
     try:
@@ -54,11 +51,14 @@ def discover_mongo_url() -> str:
     except Exception:
         pass
     
-    # 3. Use env var if explicitly provided
-    env_url = os.environ.get("MONGO_URL")
-    if env_url:
-        _logger.info(f"MongoDB from environment: {env_url}")
-        return env_url
+    # 3. Try localhost last (works in CI and local)
+    try:
+        client = AsyncIOMotorClient(f"mongodb://localhost:27017/{db_name}", serverSelectionTimeoutMS=2000)
+        client.server_info()
+        _logger.info("MongoDB auto-detected: mongodb://localhost:27017 (host/CI)")
+        return f"mongodb://localhost:27017/{db_name}"
+    except Exception:
+        pass
     
     # 4. No MongoDB found - raise clear error
     raise RuntimeError(

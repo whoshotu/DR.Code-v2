@@ -64,7 +64,7 @@ export default function DashboardPage() {
   useEffect(() => {
     try {
       const base = (process.env.REACT_APP_BACKEND_URL || "http://localhost:8002");
-      fetch(`${base}/health`).then(res => res.json()).then(h => setOllamaHealth(h?.ollama_ready ?? null)).catch(() => setOllamaHealth(null));
+      fetch(`${base}/api/health`).then(res => res.json()).then(h => setOllamaHealth(h?.ollama_ready ?? null)).catch(() => setOllamaHealth(null));
     } catch {
       setOllamaHealth(null);
     }
