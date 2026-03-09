@@ -2,9 +2,10 @@
 
 set -e
 
-VERSION="1.0.0"
+VERSION="1.0.1"
 IMAGE_BACKEND="ghcr.io/whoshotu/dr-code-v2-backend:latest"
 IMAGE_FRONTEND="ghcr.io/whoshotu/dr-code-v2-frontend:latest"
+# Favicon: included in frontend image (frontend/public/favicon.svg, favicon.ico)
 PORTS=(3001 8002 27017)
 COMPOSE_FILE="docker-compose.yml"
 GITHUB_REPO="whoshotu/DR.Code-v2"

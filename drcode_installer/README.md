@@ -144,6 +144,19 @@ export GITHUB_TOKEN=ghp_your_token_here
 
 ---
 
+## Desktop App (Linux)
+
+A desktop entry is provided for Linux systems. After cloning the repo:
+
+```bash
+cd drcode_installer
+./install-desktop.sh
+```
+
+This installs "DR.CODE Installer" to your app drawer with the project icon.
+
+---
+
 ## Support
 
 - Issues: https://github.com/whoshotu/DR.Code-v2/issues
