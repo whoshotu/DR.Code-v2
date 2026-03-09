@@ -21,15 +21,11 @@ services:
       - "127.0.0.1:8002:8002"
     env_file:
       - .env.docker
-    environment:
-      MONGO_URL: mongodb://mongo:27017
-      MONGODB_URI: mongodb://mongo:27017
-      DATABASE_URL: mongodb://mongo:27017
-      OLLAMA_BASE_URL: http://host.docker.internal:11434
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:

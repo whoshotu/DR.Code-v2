@@ -120,7 +120,21 @@ jobs:
           echo "MONGO_URL=mongodb://localhost:27017/drcode" >> $GITHUB_ENV
           echo "DB_NAME=drcode" >> $GITHUB_ENV
           echo "CORS_ORIGINS=http://localhost:3000" >> $GITHUB_ENV
+          echo "OLLAMA_BASE_URL=${{ secrets.OLLAMA_BASE_URL }}" >> $GITHUB_ENV
+          echo "OLLAMA_MODEL=${{ secrets.OLLAMA_MODEL }}" >> $GITHUB_ENV
           echo "PYTHONPATH=${{ github.workspace }}/backend" >> $GITHUB_ENV
+      
+      - name: Wait for Ollama
+        run: |
+          echo "Waiting for Ollama..."
+          for i in {1..30}; do
+            if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+              echo "Ollama is ready!"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 2
+          done
       
       - name: Start backend server
         run: |

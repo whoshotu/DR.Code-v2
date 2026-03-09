@@ -28,9 +28,73 @@ from time import perf_counter
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
-mongo_url = os.environ["MONGO_URL"]
+
+def discover_mongo_url() -> str:
+    """Auto-discover MongoDB: docker network → localhost → env var"""
+    from motor.motor_asyncio import AsyncIOMotorClient
+    
+    _logger = logging.getLogger(__name__)
+    
+    # 1. Try docker-compose network (if in compose network)
+    try:
+        client = AsyncIOMotorClient("mongodb://mongo:27017", serverSelectionTimeoutMS=2000)
+        client.server_info()
+        _logger.info("MongoDB auto-detected: mongodb://mongo:27017 (docker network)")
+        return "mongodb://mongo:27017"
+    except Exception:
+        pass
+    
+    # 2. Try localhost (user's own MongoDB)
+    try:
+        client = AsyncIOMotorClient("mongodb://localhost:27017", serverSelectionTimeoutMS=2000)
+        client.server_info()
+        _logger.info("MongoDB auto-detected: mongodb://localhost:27017 (host)")
+        return "mongodb://localhost:27017"
+    except Exception:
+        pass
+    
+    # 3. Use env var if explicitly provided
+    env_url = os.environ.get("MONGO_URL")
+    if env_url:
+        _logger.info(f"MongoDB from environment: {env_url}")
+        return env_url
+    
+    # 4. No MongoDB found - raise clear error
+    raise RuntimeError(
+        "MongoDB not found. Options:\n"
+        "  1. Install MongoDB locally: brew install mongodb-community\n"
+        "  2. Use Docker: docker run -p 27017:27017 --name mongo mongo:7\n"
+        "  3. Use MongoDB Atlas: Set MONGO_URL in .env.docker\n"
+        "  4. Already have MongoDB on a different port? Set MONGO_URL in .env.docker"
+    )
+
+
+def discover_ollama_url() -> tuple[str, str]:
+    """Auto-discover Ollama: docker internal → localhost → env var"""
+    _logger = logging.getLogger(__name__)
+    
+    # 1. Try docker internal first, then localhost
+    for url in ["http://host.docker.internal:11434", "http://localhost:11434"]:
+        try:
+            r = requests.get(f"{url}/api/tags", timeout=3)
+            if r.ok:
+                _logger.info(f"Ollama auto-detected: {url}")
+                return (url, os.environ.get("OLLAMA_MODEL", "codellama"))
+        except Exception:
+            continue
+    
+    # 2. Use env vars as fallback
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    model = os.environ.get("OLLAMA_MODEL", "codellama")
+    _logger.info(f"Ollama from environment: {base_url} ({model})")
+    return (base_url, model)
+
+
+# Initialize with auto-discovery
+mongo_url = discover_mongo_url()
+db_name = os.environ.get("DB_NAME", "drcode")
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ["DB_NAME"]]
+db = client[db_name]
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -935,13 +999,12 @@ def build_default_settings_doc() -> Dict[str, Any]:
     providers = {
         provider: build_default_provider_config(provider) for provider in PROVIDER_KEYS
     }
-    if os.environ.get("OLLAMA_BASE_URL"):
-        providers["ollama"]["base_url"] = os.environ["OLLAMA_BASE_URL"]
-    if os.environ.get("OLLAMA_MODEL"):
-        providers["ollama"]["model"] = os.environ["OLLAMA_MODEL"]
-    providers["ollama"]["enabled"] = bool(
-        os.environ.get("OLLAMA_BASE_URL") and os.environ.get("OLLAMA_MODEL")
-    )
+    
+    # Use auto-discovery for Ollama
+    ollama_base_url, ollama_model = discover_ollama_url()
+    providers["ollama"]["base_url"] = ollama_base_url
+    providers["ollama"]["model"] = ollama_model
+    providers["ollama"]["enabled"] = True
     # v2: GitHub integration block — token stored encrypted, same pattern as AI provider keys
     github_token_env = os.environ.get("GITHUB_TOKEN")
     github_webhook_secret_env = os.environ.get("GITHUB_WEBHOOK_SECRET")

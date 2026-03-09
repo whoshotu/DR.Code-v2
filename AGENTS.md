@@ -160,6 +160,49 @@ REACT_APP_BACKEND_URL=http://localhost:8002 PORT=3001 npm start
 
 ---
 
+## 7. Auto-Discovery System (v2.1)
+
+DR.CODE now includes intelligent auto-detection for dependencies. The system tries multiple sources in priority order and uses the first working one.
+
+### MongoDB Discovery (server.py)
+
+Priority order:
+1. Docker internal network (`mongodb://mongo:27017`)
+2. Localhost (`mongodb://localhost:27017`)
+3. Environment variable `MONGO_URL`
+4. Error with helpful instructions
+
+### Ollama Discovery (server.py)
+
+Priority order:
+1. Docker internal (`http://host.docker.internal:11434`)
+2. Localhost (`http://localhost:11434`)
+3. Environment variables `OLLAMA_BASE_URL`, `OLLAMA_MODEL`
+
+### Setup Script Improvements (setup.sh)
+
+- `check_mongo()` - Detects running MongoDB in Docker or on localhost
+- `check_ollama()` - Detects running Ollama in Docker or on localhost
+- Quick Start mode skips prompts if dependencies already found
+- Config saved to both `.env` (local dev) and `.env.docker` (Docker)
+
+### Docker Compose Changes
+
+- Removed hardcoded `MONGO_URL` from environment section
+- Uses `env_file` to read from `.env.docker`
+- Added `depends_on` with health check condition for MongoDB
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `backend/server.py` | Added `discover_mongo_url()`, `discover_ollama_url()` functions |
+| `docker-compose.yml` | Removed hardcoded MongoDB URL, added health check condition |
+| `setup.sh` | Added `check_mongo()`, `check_ollama()`, fixed config to both .env files |
+| `.env.docker.sample` | Added documentation for auto-detection |
+
+---
+
 ## 8. Before Submitting Any Work
 
 Run this checklist. All boxes must be checked:
