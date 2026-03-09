@@ -34,22 +34,23 @@ def discover_mongo_url() -> str:
     from motor.motor_asyncio import AsyncIOMotorClient
     
     _logger = logging.getLogger(__name__)
+    db_name = os.environ.get("DB_NAME", "drcode")
     
     # 1. Try localhost first (works in CI and local)
     try:
-        client = AsyncIOMotorClient("mongodb://localhost:27017", serverSelectionTimeoutMS=2000)
+        client = AsyncIOMotorClient(f"mongodb://localhost:27017/{db_name}", serverSelectionTimeoutMS=2000)
         client.server_info()
         _logger.info("MongoDB auto-detected: mongodb://localhost:27017 (host/CI)")
-        return "mongodb://localhost:27017"
+        return f"mongodb://localhost:27017/{db_name}"
     except Exception:
         pass
     
     # 2. Try docker-compose network (if in compose network)
     try:
-        client = AsyncIOMotorClient("mongodb://mongo:27017", serverSelectionTimeoutMS=2000)
+        client = AsyncIOMotorClient(f"mongodb://mongo:27017/{db_name}", serverSelectionTimeoutMS=2000)
         client.server_info()
         _logger.info("MongoDB auto-detected: mongodb://mongo:27017 (docker network)")
-        return "mongodb://mongo:27017"
+        return f"mongodb://mongo:27017/{db_name}"
     except Exception:
         pass
     
