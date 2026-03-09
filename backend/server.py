@@ -883,7 +883,290 @@ def rule_based_slop_detection(
             )
         )
 
+    lang = language.lower()
+    
+    if lang in ("python", "py"):
+        issues.extend(_detect_python_issues(lines, thresholds))
+    elif lang in ("javascript", "js", "typescript", "ts"):
+        issues.extend(_detect_javascript_issues(lines, thresholds))
+    elif lang == "java":
+        issues.extend(_detect_java_issues(lines, thresholds))
+    elif lang == "go":
+        issues.extend(_detect_go_issues(lines, thresholds))
+
     return issues[:25]
+
+
+def _detect_python_issues(lines: List[str], thresholds: SeverityThresholds) -> List[Issue]:
+    issues: List[Issue] = []
+    for idx, line in enumerate(lines, start=1):
+        line_lower = line.lower()
+        
+        if re.search(r'["\']\s*%\s*.*(?:select|insert|update|delete|drop|create)', line_lower, re.IGNORECASE):
+            if '%' in line and ('sql' in line_lower or 'query' in line_lower):
+                issues.append(build_issue(
+                    thresholds, "security", "SQL Injection Risk",
+                    f"Potential SQL injection on line {idx} - string formatting in SQL query.",
+                    95, "Use parameterized queries or ORM.", idx, line.strip(), confidence=0.92
+                ))
+        
+        if re.search(r'os\.system\(|subprocess\.call\(|subprocess\.run\(.*shell\s*=\s*True', line):
+            issues.append(build_issue(
+                thresholds, "security", "Command Injection Risk",
+                f"Command injection risk on line {idx}.", 90,
+                "Avoid shell=True or sanitize input.", idx, line.strip(), confidence=0.89
+            ))
+        
+        if re.search(r'open\([^,)]+\s*\+', line) or re.search(r'open\([^,)]*\%', line):
+            if 'path' in line_lower or 'file' in line_lower or 'dir' in line_lower:
+                issues.append(build_issue(
+                    thresholds, "security", "Path Traversal Risk",
+                    f"Potential path traversal on line {idx}.", 88,
+                    "Validate and sanitize file paths.", idx, line.strip(), confidence=0.85
+                ))
+        
+        if re.search(r'hashlib\.(md5|sha1)\(', line) and ('password' in line_lower or 'secret' in line_lower):
+            issues.append(build_issue(
+                thresholds, "security", "Weak Cryptography",
+                f"Weak hash algorithm on line {idx}.", 85,
+                "Use bcrypt or argon2 for passwords.", idx, line.strip(), confidence=0.91
+            ))
+        
+        if re.search(r'random\.(random|randint)\(', line) and ('token' in line_lower or 'password' in line_lower or 'session' in line_lower):
+            issues.append(build_issue(
+                thresholds, "security", "Insecure Randomness",
+                f"Random module for security-sensitive purpose on line {idx}.", 82,
+                "Use secrets module for cryptographic randomness.", idx, line.strip(), confidence=0.88
+            ))
+        
+        if re.search(r'pickle\.loads\(|pickle\.load\(', line):
+            issues.append(build_issue(
+                thresholds, "security", "Insecure Deserialization",
+                f"Pickle deserialization on line {idx} is risky.", 90,
+                "Use JSON for untrusted data.", idx, line.strip(), confidence=0.93
+            ))
+        
+        if re.search(r'sleep\([^)]+\)\s*\)', line) and 'time' not in line_lower:
+            issues.append(build_issue(
+                thresholds, "performance", "Blocking Sleep Call",
+                f"Blocking sleep on line {idx}.", 65,
+                "Use async/await or threading.", idx, line.strip(), confidence=0.75
+            ))
+        
+        if line.count('=') >= 6 and len(line) > 80:
+            issues.append(build_issue(
+                thresholds, "maintenance", "Complex Line",
+                f"Line {idx} is overly complex with multiple assignments.", 58,
+                "Break into separate statements.", idx, line.strip(), confidence=0.72
+            ))
+    
+    return issues
+
+
+def _detect_javascript_issues(lines: List[str], thresholds: SeverityThresholds) -> List[Issue]:
+    issues: List[Issue] = []
+    for idx, line in enumerate(lines, start=1):
+        line_lower = line.lower()
+        
+        if re.search(r'innerhtml\s*=|dangerouslysetinnerhtml', line, re.IGNORECASE):
+            issues.append(build_issue(
+                thresholds, "security", "XSS Vulnerability",
+                f"Potential XSS on line {idx} - direct HTML insertion.", 93,
+                "Sanitize input or use textContent.", idx, line.strip(), confidence=0.94
+            ))
+        
+        if re.search(r'eval\s*\(|new\s+function\s*\(', line):
+            issues.append(build_issue(
+                thresholds, "security", "Code Injection Risk",
+                f"Dynamic code execution on line {idx}.", 91,
+                "Avoid eval, use safer alternatives.", idx, line.strip(), confidence=0.92
+            ))
+        
+        if re.search(r'`.*\$\{.*\}.*`', line) and ('sql' in line_lower or 'query' in line_lower):
+            issues.append(build_issue(
+                thresholds, "security", "SQL Injection Risk",
+                f"Template literal SQL on line {idx}.", 94,
+                "Use parameterized queries.", idx, line.strip(), confidence=0.90
+            ))
+        
+        if re.search(r'child_process\.(exec|spawn)\(.*\+', line):
+            issues.append(build_issue(
+                thresholds, "security", "Command Injection",
+                f"Command injection risk on line {idx}.", 92,
+                "Sanitize or use safe spawn.", idx, line.strip(), confidence=0.91
+            ))
+        
+        if re.search(r'crypto\.createhash\([\'"](md5|sha1)[\'"]\)', line):
+            issues.append(build_issue(
+                thresholds, "security", "Weak Cryptography",
+                f"Weak hash on line {idx}.", 84,
+                "Use SHA-256 or stronger.", idx, line.strip(), confidence=0.89
+            ))
+        
+        if re.search(r'math\.random\(\)', line) and ('token' in line_lower or 'id' in line_lower or 'session' in line_lower):
+            issues.append(build_issue(
+                thresholds, "security", "Insecure Randomness",
+                f"Math.random for security on line {idx}.", 81,
+                "Use crypto.randomBytes().", idx, line.strip(), confidence=0.87
+            ))
+        
+        if re.search(r'===.*==|==.*===', line):
+            issues.append(build_issue(
+                thresholds, "best_practices", "Type Coercion Risk",
+                f"Mixed equality operators on line {idx}.", 55,
+                "Use === exclusively.", idx, line.strip(), confidence=0.78
+            ))
+        
+        if re.search(r'console\.(log|warn|error)\(.*password|secret|token|api_key', line, re.IGNORECASE):
+            issues.append(build_issue(
+                thresholds, "security", "Sensitive Data in Logs",
+                f"Potential secret logged on line {idx}.", 88,
+                "Remove or mask sensitive data.", idx, line.strip(), confidence=0.95
+            ))
+        
+        if re.search(r'process\.env\[.*\+', line):
+            issues.append(build_issue(
+                thresholds, "security", "Environment Variable Concatenation",
+                f"Env var concatenation on line {idx}.", 72,
+                "Use full env var names.", idx, line.strip(), confidence=0.76
+            ))
+        
+        if line.count('.then(') >= 3:
+            issues.append(build_issue(
+                thresholds, "maintenance", "Callback Hell",
+                f"Nested promises on line {idx}.", 62,
+                "Use async/await.", idx, line.strip(), confidence=0.80
+            ))
+    
+    return issues
+
+
+def _detect_java_issues(lines: List[str], thresholds: SeverityThresholds) -> List[Issue]:
+    issues: List[Issue] = []
+    for idx, line in enumerate(lines, start=1):
+        line_lower = line.lower()
+        
+        if re.search(r'statement\.executequery\s*\(\s*["\'].*\+', line) or re.search(r'preparedstatement.*\+\s*["\']', line):
+            issues.append(build_issue(
+                thresholds, "security", "SQL Injection Risk",
+                f"Potential SQL injection on line {idx}.", 94,
+                "Use PreparedStatement.", idx, line.strip(), confidence=0.93
+            ))
+        
+        if re.search(r'runtime\.getruntime\(\)\.exec\(', line):
+            issues.append(build_issue(
+                thresholds, "security", "Command Injection",
+                f"Command execution on line {idx}.", 91,
+                "Validate input thoroughly.", idx, line.strip(), confidence=0.90
+            ))
+        
+        if re.search(r'serialization\.readobject\(|objectinputstream', line):
+            issues.append(build_issue(
+                thresholds, "security", "Insecure Deserialization",
+                f"Deserialization on line {idx}.", 92,
+                "Validate or use安全的反序列化.", idx, line.strip(), confidence=0.91
+            ))
+        
+        if re.search(r'messagedigest\.getinstance\([\'"](md5|sha1)[\'"]\)', line):
+            issues.append(build_issue(
+                thresholds, "security", "Weak Cryptography",
+                f"Weak hash on line {idx}.", 84,
+                "Use SHA-256 or stronger.", idx, line.strip(), confidence=0.88
+            ))
+        
+        if re.search(r'catch\s*\(\s*exception\s+\w+\s*\)', line):
+            issues.append(build_issue(
+                thresholds, "error-handling", "Broad Exception Catch",
+                f"Catching all exceptions on line {idx}.", 68,
+                "Catch specific exceptions.", idx, line.strip(), confidence=0.82
+            ))
+        
+        if re.search(r'throws\s+exception', line):
+            issues.append(build_issue(
+                thresholds, "documentation", "Generic Exception Declaration",
+                f"Throws generic Exception on line {idx}.", 45,
+                "Declare specific exceptions.", idx, line.strip(), confidence=0.75
+            ))
+        
+        if re.search(r'string\s+\w+\s*=\s*new\s+string\(', line):
+            issues.append(build_issue(
+                thresholds, "performance", "Unnecessary String Creation",
+                f"Unnecessary String on line {idx}.", 55,
+                "Remove unnecessary conversion.", idx, line.strip(), confidence=0.73
+            ))
+        
+        if re.search(r'system\.out\.print\(', line) and ('password' in line_lower or 'secret' in line_lower or 'token' in line_lower):
+            issues.append(build_issue(
+                thresholds, "security", "Sensitive Data Logging",
+                f"Potential secret logged on line {idx}.", 87,
+                "Remove or mask sensitive data.", idx, line.strip(), confidence=0.94
+            ))
+    
+    return issues
+
+
+def _detect_go_issues(lines: List[str], thresholds: SeverityThresholds) -> List[Issue]:
+    issues: List[Issue] = []
+    for idx, line in enumerate(lines, start=1):
+        line_lower = line.lower()
+        
+        if re.search(r'exec\.command\([^)]*\+', line):
+            issues.append(build_issue(
+                thresholds, "security", "Command Injection",
+                f"Command injection risk on line {idx}.", 91,
+                "Validate or sanitize input.", idx, line.strip(), confidence=0.90
+            ))
+        
+        if re.search(r'strconv\.atoi\(|strconv\.parsefloat\(', line) and 'error' not in line:
+            issues.append(build_issue(
+                thresholds, "error-handling", "Ignoring Parse Error",
+                f"Ignoring parse error on line {idx}.", 75,
+                "Handle error return value.", idx, line.strip(), confidence=0.83
+            ))
+        
+        if re.search(r'fmt\.printf\(.*password|secret|token', line, re.IGNORECASE):
+            issues.append(build_issue(
+                thresholds, "security", "Sensitive Data Logging",
+                f"Potential secret logged on line {idx}.", 88,
+                "Remove or mask sensitive data.", idx, line.strip(), confidence=0.93
+            ))
+        
+        if re.search(r'json\.unmarshal\(.*\[\]byte', line) and 'error' not in line:
+            issues.append(build_issue(
+                thresholds, "error-handling", "Ignoring Unmarshal Error",
+                f"Ignoring JSON decode error on line {idx}.", 72,
+                "Handle error return value.", idx, line.strip(), confidence=0.80
+            ))
+        
+        if re.search(r'go\s+func\(\)\s*\{', line) and 'waitgroup' not in line and 'channel' not in line:
+            issues.append(build_issue(
+                thresholds, "performance", "Goroutine Leak Risk",
+                f"Uncontrolled goroutine on line {idx}.", 68,
+                "Ensure goroutine is properly managed.", idx, line.strip(), confidence=0.77
+            ))
+        
+        if re.search(r'panic\(', line) and 'test' not in line_lower:
+            issues.append(build_issue(
+                thresholds, "error-handling", "Panic Usage",
+                f"Panic on line {idx} - not for production.", 76,
+                "Return error instead.", idx, line.strip(), confidence=0.85
+            ))
+        
+        if re.search(r'make\(map\[', line) and 'len(' not in line:
+            issues.append(build_issue(
+                thresholds, "performance", "Uninitialized Map",
+                f"Map created without size hint on line {idx}.", 48,
+                "Provide size hint if known.", idx, line.strip(), confidence=0.70
+            ))
+        
+        if re.search(r'crypto/md5|crypto/sha1', line):
+            issues.append(build_issue(
+                thresholds, "security", "Weak Cryptography",
+                f"Weak hash on line {idx}.", 83,
+                "Use sha256 or stronger.", idx, line.strip(), confidence=0.87
+            ))
+    
+    return issues
 
 
 def generate_summary(issues: List[Issue]) -> str:
@@ -1107,12 +1390,51 @@ def to_public_settings(raw: Dict[str, Any]) -> AnalyzerSettings:
     )
 
 
+ANALYSIS_SYSTEM_PROMPT = """You are DR.CODE, a strict code quality analyzer. Analyze code and return ONLY valid JSON.
+
+CATEGORIES:
+- security: vulnerabilities, secrets, injection risks
+- performance: inefficient code, memory issues
+- maintainability: complexity, duplication, coupling
+- best_practices: error handling, type safety, documentation
+- slop: AI-generated low-quality patterns, bad practices
+- documentation: missing docs, unclear comments
+
+SEVERITY SCALE:
+- critical (90-100): security vulnerabilities, data exposure, system break
+- high (70-89): serious bugs, performance issues, major risks
+- medium (45-69): code smells, maintainability concerns
+- low (0-44): style, minor improvements
+
+OUTPUT JSON STRICT FORMAT:
+{
+  "issues": [
+    {
+      "category": "security|performance|maintenance|best_practices|slop|documentation",
+      "severity": "critical|high|medium|low",
+      "title": "Brief issue name",
+      "detail": "Description of the issue",
+      "line": number or null,
+      "confidence": 0.0-1.0,
+      "fix_suggestion": "How to fix this issue"
+    }
+  ],
+  "summary": "1-2 sentence overall assessment"
+}
+
+RULES:
+- Return ONLY valid JSON, no markdown, no explanation
+- Always include all required keys in each issue
+- confidence must be a number between 0.0 and 1.0
+- severity must be exactly: critical, high, medium, or low
+- category must be exactly one of the allowed categories
+- If no issues found, return empty issues array
+- Analyze ALL lines of code, not just a sample
+- Be thorough - missing issues is worse than false positives"""
+
+
 def build_analysis_prompt(code: str, language: str) -> str:
-    return (
-        "You are a senior code reviewer. Return JSON only with keys: "
-        "ai_notes (string), documentation (string), extra_suggestions (array of strings). "
-        f"Language: {language}. Code:\n{code}"
-    )
+    return f"{ANALYSIS_SYSTEM_PROMPT}\n\nLanguage: {language}\n\nCode to analyze:\n{code}"
 
 
 def call_provider_ollama(prompt: str, config: Dict[str, Any]) -> Optional[str]:
@@ -1588,9 +1910,36 @@ async def analyze_code(
     if ai_payload:
         mode = "hybrid"
         provider_used = ai_payload.get("provider_used", "llm")
-        ai_notes = ai_payload.get("ai_notes")
+        
+        ai_notes = ai_payload.get("summary") or ai_payload.get("ai_notes")
+        
         if ai_payload.get("documentation"):
             documentation = ai_payload["documentation"]
+        
+        for llm_issue in ai_payload.get("issues", []):
+            severity_map = {"critical": 95, "high": 75, "medium": 55, "low": 25}
+            severity = severity_map.get(llm_issue.get("severity", "medium").lower(), 55)
+            
+            issues.append(
+                build_issue(
+                    thresholds,
+                    llm_issue.get("category", "maintenance"),
+                    llm_issue.get("title", "AI Detected Issue"),
+                    llm_issue.get("detail", ""),
+                    severity,
+                    llm_issue.get("fix_suggestion", "Review and fix as needed."),
+                    llm_issue.get("line"),
+                    source=provider_used,
+                    confidence=llm_issue.get("confidence", 0.7),
+                    risk_tags=["ai-detected", llm_issue.get("category", "unknown")],
+                    decision_trace=[
+                        f"LLM provider '{provider_used}' detected issue",
+                        f"Category: {llm_issue.get('category')}",
+                        f"Severity: {llm_issue.get('severity')}",
+                    ],
+                )
+            )
+        
         for suggestion in ai_payload.get("extra_suggestions", [])[:4]:
             issues.append(
                 build_issue(
