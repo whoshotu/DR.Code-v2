@@ -14,9 +14,8 @@ services:
       start_period: 20s
 
   backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    image: ghcr.io/whoshotu/dr-code-v2-backend:latest
+    pull_policy: always
     ports:
       - "127.0.0.1:8002:8002"
     env_file:
@@ -29,9 +28,8 @@ services:
     restart: unless-stopped
 
   frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
+    image: ghcr.io/whoshotu/dr-code-v2-frontend:latest
+    pull_policy: always
     ports:
       - "127.0.0.1:3001:80"
     environment:
