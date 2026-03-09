@@ -40,3 +40,6 @@ Thumbs.db
 session-*.md
 lastsession.md
 *.tmp
+
+# Test samples (intentionally bad code for testing)
+test-samples/
