@@ -30,26 +30,26 @@ load_dotenv(ROOT_DIR / ".env")
 
 
 def discover_mongo_url() -> str:
-    """Auto-discover MongoDB: docker network → localhost → env var"""
+    """Auto-discover MongoDB: localhost → docker network → env var"""
     from motor.motor_asyncio import AsyncIOMotorClient
     
     _logger = logging.getLogger(__name__)
     
-    # 1. Try docker-compose network (if in compose network)
+    # 1. Try localhost first (works in CI and local)
+    try:
+        client = AsyncIOMotorClient("mongodb://localhost:27017", serverSelectionTimeoutMS=2000)
+        client.server_info()
+        _logger.info("MongoDB auto-detected: mongodb://localhost:27017 (host/CI)")
+        return "mongodb://localhost:27017"
+    except Exception:
+        pass
+    
+    # 2. Try docker-compose network (if in compose network)
     try:
         client = AsyncIOMotorClient("mongodb://mongo:27017", serverSelectionTimeoutMS=2000)
         client.server_info()
         _logger.info("MongoDB auto-detected: mongodb://mongo:27017 (docker network)")
         return "mongodb://mongo:27017"
-    except Exception:
-        pass
-    
-    # 2. Try localhost (user's own MongoDB)
-    try:
-        client = AsyncIOMotorClient("mongodb://localhost:27017", serverSelectionTimeoutMS=2000)
-        client.server_info()
-        _logger.info("MongoDB auto-detected: mongodb://localhost:27017 (host)")
-        return "mongodb://localhost:27017"
     except Exception:
         pass
     
@@ -70,11 +70,11 @@ def discover_mongo_url() -> str:
 
 
 def discover_ollama_url() -> tuple[str, str]:
-    """Auto-discover Ollama: docker internal → localhost → env var"""
+    """Auto-discover Ollama: localhost → docker internal → env var"""
     _logger = logging.getLogger(__name__)
     
-    # 1. Try docker internal first, then localhost
-    for url in ["http://host.docker.internal:11434", "http://localhost:11434"]:
+    # 1. Try localhost first (works in CI and local), then docker internal
+    for url in ["http://localhost:11434", "http://host.docker.internal:11434"]:
         try:
             r = requests.get(f"{url}/api/tags", timeout=3)
             if r.ok:
